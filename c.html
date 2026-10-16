@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="robots" content="noindex">
+<title>Confirme sua consulta</title>
+<link rel="icon" href="favicon-48.png" type="image/png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@600&family=Figtree:wght@400;600;700&display=swap">
+<style>
+/* Página do paciente: um cartão central com a consulta e dois botões grandes */
+:root{
+  --bg:#F5F1EC; --surface:#FFFDFA; --ink:#2F2B2D; --muted:#776E72; --line:#E4DCD5;
+  --plum:#5A3A63; --plum-ink:#FFFFFF; --plum-soft:#EFE6F1; --ok:#2E7D4F; --bad:#B23A3A;
+  --f-display:"Cormorant Garamond", "Garamond", "Times New Roman", serif;
+  --f-body:"Figtree", "Segoe UI", system-ui, sans-serif;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --bg:#1B171D; --surface:#252028; --ink:#EEE7EC; --muted:#A99EA6; --line:#3A3240;
+  --plum:#C9A6D3; --plum-ink:#22172A; --plum-soft:#382C3F; --ok:#7FD3A0; --bad:#F09A93; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#1B171D; --surface:#252028; --ink:#EEE7EC; --muted:#A99EA6; --line:#3A3240;
+  --plum:#C9A6D3; --plum-ink:#22172A; --plum-soft:#382C3F; --ok:#7FD3A0; --bad:#F09A93; color-scheme:dark}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--f-body);font-size:16px;line-height:1.5}
+main{min-height:100vh;display:grid;place-items:center;padding:24px 16px}
+.card{width:100%;max-width:400px;background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:24px 20px;text-align:center;display:flex;flex-direction:column;gap:12px;align-items:center}
+img{width:96px;height:96px;border-radius:50%;border:2px solid var(--plum)}
+h1{font-family:var(--f-display);font-weight:600;font-size:1.9rem;margin:0}
+.det{background:var(--plum-soft);border-radius:12px;padding:12px 14px;width:100%}
+.btn{width:100%;font:inherit;font-weight:700;border-radius:10px;padding:14px 16px;cursor:pointer;border:1px solid var(--plum);background:var(--plum);color:var(--plum-ink)}
+.btn.ghost{background:transparent;color:var(--plum)}
+.btn:disabled{opacity:.5}
+.btn:focus-visible{outline:2px solid var(--plum);outline-offset:2px}
+.muted{color:var(--muted);font-size:.9rem}
+.ok{color:var(--ok);font-weight:700} .bad{color:var(--bad);font-weight:700}
+</style>
+</head>
+<body>
+<main>
+  <div class="card" id="card" aria-live="polite">
+    <img src="logo.jpg" alt="Logo Dra. Iolanda Alves Odontologia">
+    <h1>Dra. Iolanda Alves</h1>
+    <p class="muted">Carregando sua consulta…</p>
+  </div>
+</main>
+<script type="module">
+import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js';
+import { getFirestore, doc, getDoc, updateDoc, serverTimestamp } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js';
+import { firebaseConfig } from './firebase-config.js';
+
+const db = getFirestore(initializeApp(firebaseConfig));
+const card = document.getElementById('card');
+const topo = '<img src="logo.jpg" alt="Logo Dra. Iolanda Alves Odontologia"><h1>Dra. Iolanda Alves</h1>';
+const esc = s => String(s??'').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const DIAS = ['domingo','segunda-feira','terça-feira','quarta-feira','quinta-feira','sexta-feira','sábado'];
+const quando = c => { const d = new Date(c.data+'T12:00'); return `${DIAS[d.getDay()]}, ${c.data.split('-').reverse().join('/')} às ${esc(c.hora)}`; };
+const id = new URLSearchParams(location.search).get('id') || '';
+const ref = /^[A-Za-z0-9]{10,40}$/.test(id) ? doc(db, 'confirmacoes', id) : null;
+
+function mostrar(c){
+  const det = `<div class="det"><b>${esc(c.nome)}</b><br>${quando(c)}<br>${esc(c.proc)} · ${esc(c.prof)}</div>`;
+  if(c.resposta==='confirmado') card.innerHTML = `${topo}${det}<p class="ok">Presença confirmada. Até lá!</p><p class="muted">Se precisar mudar, toque abaixo.</p><button class="btn ghost" data-r="remarcar">Preciso remarcar</button>`;
+  else if(c.resposta==='remarcar') card.innerHTML = `${topo}${det}<p class="bad">Recebemos seu pedido.</p><p class="muted">O consultório vai entrar em contato para remarcar.</p><button class="btn ghost" data-r="confirmado">Mudei de ideia: vou comparecer</button>`;
+  else card.innerHTML = `${topo}<p>Olá, <b>${esc(c.nome)}</b>! Confirme sua consulta:</p>${det}<button class="btn" data-r="confirmado">Confirmo minha presença</button><button class="btn ghost" data-r="remarcar">Preciso remarcar</button>`;
+}
+function invalido(){ card.innerHTML = `${topo}<p>Não encontramos esta consulta.</p><p class="muted">O link pode estar incompleto ou a consulta foi cancelada. Fale com o consultório pelo WhatsApp.</p>`; }
+
+let dados = null;
+if(!ref) invalido();
+else getDoc(ref).then(s => { if(!s.exists()) return invalido(); dados = s.data(); mostrar(dados); })
+  .catch(() => { card.innerHTML = `${topo}<p>Não foi possível abrir agora.</p><p class="muted">Confira a internet e abra o link de novo.</p>`; });
+
+card.addEventListener('click', e => {
+  const b = e.target.closest('[data-r]'); if(!b || !dados) return;
+  card.querySelectorAll('button').forEach(x => x.disabled = true);
+  updateDoc(ref, {resposta: b.dataset.r, respondidoEm: serverTimestamp()})
+    .then(() => { dados = {...dados, resposta: b.dataset.r}; mostrar(dados); })
+    .catch(() => { card.querySelectorAll('button').forEach(x => x.disabled = false); alert('Não foi possível enviar. Confira a internet e tente de novo.'); });
+});
+</script>
+</body>
+</html>

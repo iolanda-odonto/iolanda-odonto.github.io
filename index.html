@@ -328,7 +328,13 @@ const pendAmanha = () => S.agenda.filter(a=>a.data===addDays(TODAY,1) && ['pende
 const estBaixo = i => i.qtd <= i.min;
 const estVence = i => !!i.val && i.val <= addDays(TODAY,30);
 const estAlert = () => S.estoque.filter(i=>estBaixo(i)||estVence(i)).length;
-const pacientes = () => { const m = new Map(); [...S.atend, ...S.agenda].sort((a,b)=>a.data.localeCompare(b.data)).forEach(x=>{ const n = (x.paciente||'').trim(); if(n) m.set(n.toLowerCase(), {nome:n, fone:x.fone || (m.get(n.toLowerCase())||{}).fone || ''}); }); return [...m.values()]; };
+// Todos os pacientes conhecidos: as fichas primeiro (nome e WhatsApp da ficha valem mais), depois quem só aparece na agenda ou nos atendimentos.
+const pacientes = () => {
+  const m = new Map();
+  [...S.atend, ...S.agenda].sort((a,b)=>a.data.localeCompare(b.data)).forEach(x=>{ const n = (x.paciente||'').trim(), k = normN(n); if(n) m.set(k, {nome:n, fone:x.fone || (m.get(k)||{}).fone || ''}); });
+  S.pac.forEach(p=>{ const k = normN(p.nome); m.set(k, {nome:p.nome, fone:p.fone || (m.get(k)||{}).fone || ''}); });
+  return [...m.values()].sort((a,b)=>a.nome.localeCompare(b.nome,'pt-BR'));
+};
 
 function renderTabs(){
   document.getElementById('tabs').innerHTML = TABS.map(([k,l])=>{ const n = k==='confirm'?pendAmanha():k==='estoque'?estAlert():0;

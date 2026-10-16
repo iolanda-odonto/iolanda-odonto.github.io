@@ -68,7 +68,8 @@ h3{font-size:.78rem;letter-spacing:.14em;text-transform:uppercase;color:var(--mu
 .neg{color:var(--bad)} .pos{color:var(--ok)} .muted{color:var(--muted)}
 form .row{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-bottom:12px}
 label{display:flex;flex-direction:column;gap:4px;font-size:.8rem;font-weight:600;color:var(--muted)}
-input,select{font:inherit;font-size:.95rem;color:var(--ink);background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:9px 10px;width:100%}
+input,select,textarea{font:inherit;font-size:.95rem;color:var(--ink);background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:9px 10px;width:100%}
+textarea{min-height:90px;resize:vertical}
 input:focus,select:focus,button:focus-visible,a:focus-visible{outline:2px solid var(--plum);outline-offset:1px}
 .btn{font:inherit;font-weight:600;border-radius:8px;padding:10px 16px;cursor:pointer;border:1px solid var(--plum);background:var(--plum);color:var(--plum-ink);text-decoration:none;display:inline-flex;align-items:center;gap:6px;justify-content:center}
 .btn.ghost{background:transparent;color:var(--plum)}
@@ -143,6 +144,31 @@ label.chk input{width:auto;accent-color:var(--plum)}
 .login form{display:flex;flex-direction:column;gap:12px;text-align:left}
 .carregando{min-height:60vh;display:grid;place-items:center;color:var(--muted)}
 @media (prefers-reduced-motion:no-preference){.bar i{transition:width .4s ease}}
+.pac-row{display:flex;justify-content:space-between;align-items:center;gap:10px;width:100%;text-align:left;background:none;border:0;border-bottom:1px solid var(--line);padding:12px 4px;font:inherit;color:var(--ink);cursor:pointer}
+.pac-row:hover{background:var(--plum-soft)}
+.pac-row small{display:block;color:var(--muted);font-size:.8rem}
+.alerta{background:var(--bad-soft);color:var(--bad);border-radius:10px;padding:10px 14px;font-weight:700;margin-bottom:14px}
+.campos{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(180px,100%),1fr));gap:10px 16px}
+.campos .rot{display:block;font-size:.75rem;color:var(--muted)}
+.campos .val{white-space:pre-line;overflow-wrap:anywhere}
+.evo{border-left:3px solid var(--plum);padding:4px 34px 4px 12px;margin-bottom:14px;position:relative}
+.evo .evo-h{font-size:.82rem;color:var(--muted)}
+.evo p{margin:4px 0 0;white-space:pre-line;overflow-wrap:anywhere}
+.evo .x{position:absolute;top:0;right:0}
+.plano-it{display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--line)}
+.plano-it input{width:auto;accent-color:var(--plum)}
+.plano-it span{flex:1;overflow-wrap:anywhere}
+.plano-it.feito span{text-decoration:line-through;color:var(--muted)}
+details > summary{list-style:none} details > summary::-webkit-details-marker{display:none}
+.so-print{display:none}
+@media print{
+  body{background:#fff;color:#000;font-size:12px}
+  header.top,nav.tabs,.noprint,#view form,.toast{display:none!important}
+  .so-print{display:block;margin-bottom:10px;border-bottom:1px solid #999;padding-bottom:6px}
+  .grid{display:block}
+  .card{border:1px solid #bbb;break-inside:avoid;margin-bottom:10px;background:#fff}
+  .chip{border:1px solid #999}
+}
 .dica-arrastar{display:none}
 /* Celular: cabeçalho compacto, todas as abas visíveis em grade, tabelas viram fichas e campos sem zoom automático */
 @media (max-width:640px){
@@ -223,7 +249,7 @@ try { db = initializeFirestore(fb, {localCache: persistentLocalCache({tabManager
 catch(e){ db = initializeFirestore(fb, {}); }
 
 const FORMAS = ['Pix','Dinheiro','Débito','Crédito à vista','Crédito parcelado'];
-const TABS = [['inicio','Início'],['dash','Dashboard'],['agenda','Agenda'],['confirm','Confirmações'],['atend','Atendimentos'],['caixa','Fluxo de caixa'],['estoque','Estoque'],['rel','Relatórios'],['config','Configurações']];
+const TABS = [['inicio','Início'],['dash','Dashboard'],['agenda','Agenda'],['pacientes','Pacientes'],['confirm','Confirmações'],['atend','Atendimentos'],['caixa','Fluxo de caixa'],['estoque','Estoque'],['rel','Relatórios'],['config','Configurações']];
 const brl = v => (v||0).toLocaleString('pt-BR',{style:'currency',currency:'BRL'});
 const pct = v => (v||0).toLocaleString('pt-BR',{maximumFractionDigits:2})+'%';
 const iso = d => d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
@@ -240,16 +266,17 @@ tick();
 const mesAnterior = () => { const d = new Date(TODAY+'T12:00'); d.setDate(1); d.setMonth(d.getMonth()-1); return iso(d).slice(0,7); };
 
 // Dados: tudo fica no Firestore. Cada coleção abaixo vira uma lista em S, atualizada ao vivo.
-const COLS = {agenda:'agenda', atendimentos:'atend', despesas:'desp', estoque:'estoque', estoqueMov:'movEst', confirmacoes:'conf'};
+const COLS = {agenda:'agenda', atendimentos:'atend', despesas:'desp', estoque:'estoque', estoqueMov:'movEst', confirmacoes:'conf', pacientes:'pac', evolucoes:'evo'};
+const NCARGA = Object.keys(COLS).length + 1; // coleções + config/geral
 const TAXAS_EXEMPLO = {debito:1.99, credito1:3.49, cred2a6:5.49, cred7a12:7.99};
 const DEF = {
   profs: [{id:'p1',nome:'Dra. Iolanda Alves',turno:'Manhã'},{id:'p2',nome:'Profissional 2',turno:'Tarde'}],
   procs: [['Avaliação',100],['Limpeza (profilaxia)',180],['Restauração em resina',250],['Extração simples',300],['Aplicação de flúor',80],['Clareamento',900],['Tratamento de canal',1200],['Manutenção ortodôntica',150]].map(([nome,valor],i)=>({id:'pr'+(i+1),nome,valor})),
   taxas: TAXAS_EXEMPLO
 };
-const vazio = () => ({profs:DEF.profs, procs:DEF.procs, taxas:{...DEF.taxas}, agenda:[], atend:[], desp:[], estoque:[], movEst:[], conf:[]});
+const vazio = () => ({profs:DEF.profs, procs:DEF.procs, taxas:{...DEF.taxas}, agenda:[], atend:[], desp:[], estoque:[], movEst:[], conf:[], pac:[], evo:[]});
 let S = vazio(), user = null, unsubs = [], carregados = new Set(), cfgCriada = false;
-let tab = 'inicio', agDay = TODAY, selConf = null, prefill = null, estSel = null, estTipo = 'Saída';
+let tab = 'inicio', agDay = TODAY, selConf = null, prefill = null, estSel = null, estTipo = 'Saída', pacSel = null, pacEdit = null;
 
 const num = v => +v || 0;
 const dataOk = s => /^\d{4}-\d{2}-\d{2}$/.test(s||'');
@@ -260,7 +287,9 @@ const NORM = {
   despesas: d => dataOk(d.data) && d.desc ? {...d, valor:num(d.valor), tipo:d.tipo==='Variável'?'Variável':'Fixa'} : null,
   estoque: i => i.nome ? {...i, qtd:num(i.qtd), min:num(i.min), custo:num(i.custo), val:i.val||'', un:i.un||'unidade', cat:i.cat||'Outros'} : null,
   estoqueMov: m => dataOk(m.data) && m.nome ? {...m, qtd:num(m.qtd)} : null,
-  confirmacoes: c => c
+  confirmacoes: c => c,
+  pacientes: p => p.nome ? {...p, fone:p.fone||'', anamnese:p.anamnese||{}, plano:Array.isArray(p.plano)?p.plano:[]} : null,
+  evolucoes: e => dataOk(e.data) && (e.pacienteId || e.paciente) ? {...e, prof:e.prof||'p1'} : null
 };
 
 function toast(t){ const el = document.getElementById('toast'); el.textContent = t; el.hidden = false; clearTimeout(toast.t); toast.t = setTimeout(()=>el.hidden=true, 3200); }
@@ -393,7 +422,7 @@ V.agenda = () => {
     <div class="card">
       <div class="daynav"><button class="btn sm ghost" data-day="-1" aria-label="Dia anterior">‹</button><b>${diaSem(agDay)}, ${fmtD(agDay)}${agDay===TODAY?' · hoje':''}</b><button class="btn sm ghost" data-day="1" aria-label="Próximo dia">›</button></div>
       ${agDay!==TODAY?'<button class="btn sm ghost" data-hoje="1" style="margin-bottom:8px">Voltar para hoje</button>':''}
-      ${lista.length?lista.map(a=>`<div class="slot"><span class="h">${a.hora}</span><div class="who"><b>${esc(a.paciente)}</b><small>${esc(a.proc)} · ${esc(profCurto(a.prof))}${a.fone?' · '+esc(a.fone):''}</small></div><div class="act">${viaClaude(a)}${chip(stAg(a))}<button class="btn sm ghost" data-atender="${a.id}">Registrar atendimento</button><button class="btn sm danger" data-del="agenda:${a.id}">Excluir</button></div></div>`).join(''):'<p class="empty">Nenhum horário marcado neste dia. Use o formulário ao lado para agendar.</p>'}
+      ${lista.length?lista.map(a=>`<div class="slot"><span class="h">${a.hora}</span><div class="who"><b>${esc(a.paciente)}</b><small>${esc(a.proc)} · ${esc(profCurto(a.prof))}${a.fone?' · '+esc(a.fone):''}</small></div><div class="act">${viaClaude(a)}${chip(stAg(a))}<button class="btn sm ghost" data-ficha="${esc(a.paciente)}" data-fone="${esc(a.fone)}">Ficha</button><button class="btn sm ghost" data-atender="${a.id}">Registrar atendimento</button><button class="btn sm danger" data-del="agenda:${a.id}">Excluir</button></div></div>`).join(''):'<p class="empty">Nenhum horário marcado neste dia. Use o formulário ao lado para agendar.</p>'}
     </div>
     <form class="card" id="fAg" style="align-self:start"><h3>Novo agendamento</h3>
       <div class="row"><label>Paciente<input id="agPac" required list="pacList" autocomplete="off" placeholder="Nome completo"><datalist id="pacList">${pacientes().map(p=>`<option value="${esc(p.nome)}">`).join('')}</datalist></label></div>
@@ -446,10 +475,12 @@ V.atend = () => {
       <div class="row"><label>Procedimento<select id="atProc">${S.procs.map(x=>`<option ${x.nome===procSel?'selected':''}>${esc(x.nome)}</option>`).join('')}</select></label><label>Valor (R$)<input id="atValor" type="number" min="0" step="0.01" required value="${valor}"></label></div>
       <div class="row"><label>Forma de pagamento<select id="atForma">${FORMAS.map(f=>`<option>${f}</option>`).join('')}</select></label><label id="lParc" hidden>Parcelas<select id="atParc">${[2,3,4,5,6,7,8,9,10,11,12].map(n=>`<option value="${n}">${n}x</option>`).join('')}</select></label></div>
       <div class="calc" id="calc"></div>
+      <div class="row"><label>Dentes (vai para a ficha)<input id="atDentes" placeholder="Ex.: 16, 26, 27"></label></div>
+      <div class="row"><label>O que foi feito / observações (vai para a ficha)<textarea id="atObs" placeholder="Opcional"></textarea></label></div>
       <button class="btn" type="submit">Salvar atendimento</button>
     </form>
     <div class="card"><h3>Últimos lançamentos</h3>${lista.length?`<div class="tbl-wrap"><table class="resp"><thead><tr><th>Data</th><th>Paciente</th><th>Pagamento</th><th class="r">Líquido</th><th></th></tr></thead><tbody>
-      ${lista.map(a=>`<tr><td class="num" data-label="Data">${fmtD(a.data).slice(0,5)}</td><td class="full">${viaClaude(a)}<b>${esc(a.paciente)}</b><br><small class="muted">${esc(a.proc)} · ${esc(profCurto(a.prof))}</small></td><td data-label="Pagamento">${esc(a.forma)}${a.parc>1?' '+a.parc+'x':''}${a.taxa?`<br><small class="muted">taxa ${pct(a.taxa)}</small>`:''}</td><td class="r num" data-label="Líquido">${brl(liq(a))}</td><td class="acao"><button class="x" data-del="atendimentos:${a.id}" aria-label="Excluir atendimento" title="Excluir">✕</button></td></tr>`).join('')}
+      ${lista.map(a=>`<tr><td class="num" data-label="Data">${fmtD(a.data).slice(0,5)}</td><td class="full">${viaClaude(a)}<b>${esc(a.paciente)}</b><br><small class="muted">${esc(a.proc)} · ${esc(profCurto(a.prof))}</small></td><td data-label="Pagamento">${esc(a.forma)}${a.parc>1?' '+a.parc+'x':''}${a.taxa?`<br><small class="muted">taxa ${pct(a.taxa)}</small>`:''}</td><td class="r num" data-label="Líquido">${brl(liq(a))}</td><td class="acao"><button class="btn sm ghost" data-ficha="${esc(a.paciente)}">Ficha</button><button class="x" data-del="atendimentos:${a.id}" aria-label="Excluir atendimento" title="Excluir">✕</button></td></tr>`).join('')}
     </tbody></table></div>`:'<p class="empty">Nenhum atendimento lançado ainda.</p>'}</div>
   </div>`;
 };
@@ -559,6 +590,97 @@ V.rel = () => {
   </div>`;
 };
 
+// Prontuário: a ficha liga pelo pacienteId e, nos registros antigos ou sem id, pelo nome.
+const normN = s => String(s||'').trim().toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g,'');
+const dePac = p => x => x.pacienteId ? x.pacienteId===p.id : normN(x.paciente)===normN(p.nome);
+const fmtFone = f => { const d = String(f||'').replace(/\D/g,''); return d.length===11 ? `(${d.slice(0,2)}) ${d.slice(2,7)}-${d.slice(7)}` : d.length===10 ? `(${d.slice(0,2)}) ${d.slice(2,6)}-${d.slice(6)}` : d; };
+const idade = n => { if(!dataOk(n)) return ''; const h = new Date(TODAY+'T12:00'), d = new Date(n+'T12:00'); let a = h.getFullYear()-d.getFullYear(); if(h < new Date(h.getFullYear(), d.getMonth(), d.getDate(), 12)) a--; return a+' anos'; };
+const ultimaVisita = p => [...S.evo, ...S.atend].filter(dePac(p)).map(x=>x.data).filter(d=>d<=TODAY).sort().pop() || '';
+function garantirPac(nome, fone){
+  const n = normN(nome); if(!n) return null;
+  let p = S.pac.find(x=>normN(x.nome)===n);
+  if(!p){ p = {id:novoId(), nome:nome.trim(), fone:fone||'', nasc:'', cpf:'', endereco:'', anamnese:{}, plano:[], criadoEm:TODAY}; put('pacientes', p); }
+  else if(fone && !p.fone) put('pacientes', {...p, fone});
+  return p.id;
+}
+function abrirFicha(id){ pacSel = id; pacEdit = null; go('pacientes'); }
+
+function listaPac(){
+  const extras = pacientes().filter(x=>!S.pac.some(p=>normN(p.nome)===normN(x.nome)));
+  const linhas = [...S.pac.map(p=>({nome:p.nome, fone:p.fone, attr:`data-abrirpac="${p.id}"`, alerta:!!String(p.anamnese.alergias||'').trim(), ultima:ultimaVisita(p)})),
+    ...extras.map(x=>({nome:x.nome, fone:x.fone, attr:`data-ficha="${esc(x.nome)}" data-fone="${esc(x.fone)}"`, semFicha:true}))].sort((a,b)=>a.nome.localeCompare(b.nome,'pt-BR'));
+  return `<h2>Pacientes</h2><p class="lead">A ficha de cada paciente: dados, anamnese, plano de tratamento e tudo o que já foi feito em cada visita.</p>
+  <div class="grid split">
+    <div class="card"><label>Buscar paciente<input id="pacBusca" type="search" placeholder="Digite o nome" autocomplete="off"></label>
+      <div id="pacLista" class="mt">${linhas.length ? linhas.map(l=>`<button type="button" class="pac-row" ${l.attr} data-busca="${esc(normN(l.nome))}"><span><b>${esc(l.nome)}</b><small>${l.fone?esc(fmtFone(l.fone)):'sem WhatsApp'}${l.ultima?' · última visita '+fmtD(l.ultima):''}</small></span><span style="white-space:nowrap">${l.alerta?'<span class="chip c-bad">Alergia</span> ':''}${l.semFicha?'<span class="chip c-neu">sem ficha</span> ':''}›</span></button>`).join('') : '<p class="empty">Nenhum paciente ainda.</p>'}</div>
+    </div>
+    <form class="card" id="fPac" style="align-self:start"><h3>Novo paciente</h3>
+      <div class="row"><label>Nome completo<input id="npNome" required autocomplete="off"></label></div>
+      <div class="row"><label>WhatsApp<input id="npFone" inputmode="tel" placeholder="(88) 99999-0000"></label><label>Nascimento<input id="npNasc" type="date"></label></div>
+      <button class="btn" type="submit">Criar ficha</button>
+    </form>
+  </div>`;
+}
+
+function ficha(p){
+  const a = p.anamnese || {}, f = dePac(p), ed = pacEdit;
+  const evos = S.evo.filter(f).sort((x,y)=>(y.data+(y.hora||'')).localeCompare(x.data+(x.hora||'')));
+  const ats = S.atend.filter(f).sort((x,y)=>y.data.localeCompare(x.data));
+  const prox = S.agenda.filter(f).filter(x=>x.data>=TODAY).sort((x,y)=>(x.data+x.hora).localeCompare(y.data+y.hora));
+  const plano = p.plano || [];
+  const campo = (rot, v) => `<div><span class="rot">${rot}</span><span class="val">${String(v||'').trim()?esc(v):'<span class="muted">—</span>'}</span></div>`;
+  const gest = a.gestante===true ? 'Sim' : a.gestante===false ? 'Não' : '';
+  return `<div class="noprint" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px"><button class="btn sm ghost" type="button" data-voltarpac="1">‹ Pacientes</button><button class="btn sm ghost" type="button" data-imprimir="1">Imprimir ficha</button></div>
+  <div class="so-print"><b>Dra. Iolanda Alves · Odontologia</b> · Prontuário do paciente · impresso em ${fmtD(TODAY)}</div>
+  <h2>${esc(p.nome)}</h2><p class="lead">${[idade(p.nasc), p.fone?fmtFone(p.fone):'', p.cpf?'CPF '+p.cpf:''].filter(Boolean).map(esc).join(' · ') || 'Ficha do paciente'}</p>
+  ${String(a.alergias||'').trim()?`<div class="alerta">⚠ Alergia: ${esc(a.alergias)}</div>`:''}
+  <div class="grid g2">
+    ${ed==='dados' ? `<form class="card" id="fDados"><h3>Dados do paciente</h3>
+      <div class="row"><label>Nome completo<input id="pdNome" required value="${esc(p.nome)}"></label></div>
+      <div class="row"><label>WhatsApp<input id="pdFone" inputmode="tel" value="${esc(p.fone)}"></label><label>Nascimento<input id="pdNasc" type="date" value="${esc(p.nasc||'')}"></label></div>
+      <div class="row"><label>CPF<input id="pdCpf" inputmode="numeric" value="${esc(p.cpf||'')}"></label></div>
+      <div class="row"><label>Endereço<input id="pdEnd" value="${esc(p.endereco||'')}"></label></div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn" type="submit">Salvar</button><button class="btn ghost" type="button" data-editpac="">Cancelar</button></div></form>`
+    : `<div class="card"><h3>Dados do paciente</h3><div class="campos">${campo('WhatsApp', p.fone?fmtFone(p.fone):'')}${campo('Nascimento', p.nasc?fmtD(p.nasc)+' ('+idade(p.nasc)+')':'')}${campo('CPF', p.cpf)}${campo('Endereço', p.endereco)}</div>
+      <button class="btn sm ghost mt noprint" type="button" data-editpac="dados">Editar dados</button></div>`}
+    ${ed==='anamnese' ? `<form class="card" id="fAnam"><h3>Anamnese</h3>
+      <div class="row"><label>Alergias<input id="anAlerg" value="${esc(a.alergias||'')}" placeholder="Ex.: dipirona, látex"></label></div>
+      <div class="row"><label>Medicamentos em uso<input id="anMed" value="${esc(a.medicamentos||'')}"></label></div>
+      <div class="row"><label>Doenças / condições<input id="anDoen" value="${esc(a.doencas||'')}" placeholder="Ex.: hipertensão, diabetes"></label><label>Gestante<select id="anGest"><option value="">—</option><option value="nao" ${a.gestante===false?'selected':''}>Não</option><option value="sim" ${a.gestante===true?'selected':''}>Sim</option></select></label></div>
+      <div class="row"><label>Observações<textarea id="anObs">${esc(a.obs||'')}</textarea></label></div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn" type="submit">Salvar</button><button class="btn ghost" type="button" data-editpac="">Cancelar</button></div></form>`
+    : `<div class="card"><h3>Anamnese</h3><div class="campos">${campo('Alergias', a.alergias)}${campo('Medicamentos em uso', a.medicamentos)}${campo('Doenças / condições', a.doencas)}${campo('Gestante', gest)}${campo('Observações', a.obs)}</div>
+      <button class="btn sm ghost mt noprint" type="button" data-editpac="anamnese">Editar anamnese</button></div>`}
+    <div class="card wide"><h3>Plano de tratamento</h3>
+      ${plano.length ? plano.map(it=>`<div class="plano-it ${it.feito?'feito':''}"><input type="checkbox" data-plano="${it.id}" ${it.feito?'checked':''} aria-label="Marcar como feito"><span>${esc(it.texto)}</span><button class="x noprint" type="button" data-delplano="${it.id}" aria-label="Excluir item" title="Excluir">✕</button></div>`).join('') : '<p class="muted" style="margin:0">Nada planejado ainda.</p>'}
+      <form id="fPlano" class="mt" style="display:flex;gap:8px"><input id="plTexto" required placeholder="Ex.: canal no 36"><button class="btn" type="submit">Adicionar</button></form>
+    </div>
+    <div class="card wide"><h3>Evolução clínica</h3>
+      <details class="noprint" style="margin-bottom:16px"><summary class="btn sm ghost">+ Nova evolução</summary>
+      <form id="fEvo" class="mt">
+        <div class="row"><label>Data<input id="evData" type="date" required value="${TODAY}"></label><label>Profissional<select id="evProf">${S.profs.map(x=>`<option value="${x.id}">${esc(x.nome)}</option>`).join('')}</select></label><label>Dentes<input id="evDentes" placeholder="Ex.: 16, 26, 27"></label></div>
+        <div class="row"><label>Procedimento<input id="evProc" list="evProcs" placeholder="Ex.: Restauração em resina"><datalist id="evProcs">${S.procs.map(x=>`<option value="${esc(x.nome)}">`).join('')}</datalist></label></div>
+        <div class="row"><label>O que foi feito / observações<textarea id="evObs" placeholder="Ex.: resina A2, paciente relatou sensibilidade ao frio"></textarea></label></div>
+        <button class="btn" type="submit">Salvar evolução</button>
+      </form></details>
+      ${evos.length ? evos.map(e=>`<div class="evo"><div class="evo-h">${viaClaude(e)}<b>${fmtD(e.data)}</b> · ${esc(profCurto(e.prof))}${e.dentes?' · dentes '+esc(e.dentes):''}</div>${e.proc?`<b>${esc(e.proc)}</b>`:''}${e.obs?`<p>${esc(e.obs)}</p>`:''}<button class="x noprint" type="button" data-del="evolucoes:${e.id}" aria-label="Excluir evolução" title="Excluir">✕</button></div>`).join('') : '<p class="muted" style="margin:0">Nenhuma evolução registrada ainda.</p>'}
+    </div>
+    <div class="card"><h3>Atendimentos e pagamentos</h3>${ats.length ? `<div class="tbl-wrap"><table class="resp"><thead><tr><th>Data</th><th>Procedimento</th><th class="r">Valor</th></tr></thead><tbody>${ats.map(x=>`<tr><td class="num" data-label="Data">${fmtD(x.data)}</td><td class="full">${esc(x.proc)}<br><small class="muted">${esc(profCurto(x.prof))} · ${esc(x.forma)}${x.parc>1?' '+x.parc+'x':''}</small></td><td class="r num" data-label="Valor">${brl(x.valor)}</td></tr>`).join('')}</tbody></table></div><p class="note">Total: <b>${brl(ats.reduce((s,x)=>s+x.valor,0))}</b></p>` : '<p class="muted" style="margin:0">Nenhum atendimento lançado.</p>'}</div>
+    <div class="card"><h3>Próximos agendamentos</h3>${prox.length ? prox.map(x=>`<div class="slot"><span class="h">${x.hora}</span><div class="who"><b>${diaSem(x.data)}, ${fmtD(x.data)}</b><small>${esc(x.proc)} · ${esc(profCurto(x.prof))}</small></div><div class="act">${chip(stAg(x))}</div></div>`).join('') : '<p class="muted" style="margin:0">Nenhum agendamento futuro.</p>'}</div>
+  </div>`;
+}
+V.pacientes = () => { const p = pacSel && S.pac.find(x=>x.id===pacSel); if(!p) pacSel = null; return p ? ficha(p) : listaPac(); };
+
+function baixarBackup(){
+  const dados = {geradoEm:new Date().toISOString(), config:{profs:S.profs, procs:S.procs, taxas:S.taxas}};
+  for(const [col,k] of Object.entries(COLS)) dados[col] = S[k];
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([JSON.stringify(dados, null, 1)], {type:'application/json'}));
+  a.download = `backup-clinica-${TODAY}.json`; document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(()=>URL.revokeObjectURL(a.href), 2000);
+  toast('Cópia de segurança baixada');
+}
+
 V.config = () => {
   const exemplo = Object.keys(TAXAS_EXEMPLO).every(k=>S.taxas[k]===TAXAS_EXEMPLO[k]);
   return `<h2>Configurações</h2><p class="lead">Cadastre uma vez e o sistema usa em todos os lançamentos. Tudo aqui pode ser editado.</p>
@@ -579,6 +701,11 @@ V.config = () => {
       ${S.procs.map(p=>`<div class="edit-row"><input id="prNome_${p.id}" value="${esc(p.nome)}" aria-label="Nome do procedimento"><input id="prValor_${p.id}" type="number" min="0" step="0.01" value="${p.valor}" aria-label="Valor"><button type="button" class="x" data-delproc="${p.id}" aria-label="Excluir procedimento" title="Excluir">✕</button></div>`).join('')}
       <div style="display:flex;gap:8px;flex-wrap:wrap" class="mt"><button class="btn" type="submit">Salvar procedimentos</button><button class="btn ghost" type="button" id="addProc">+ Novo procedimento</button></div>
     </form>
+    <div class="card wide"><h3>Cópia de segurança</h3>
+      <p style="margin:0 0 12px">Baixa um arquivo com todos os dados do sistema (pacientes, prontuários, agenda, caixa e estoque). Guarde no Google Drive ou num pen drive.</p>
+      <button class="btn ghost" type="button" id="backup">Baixar cópia de segurança</button>
+      <p class="note">O prontuário precisa ser guardado por 20 anos. Faça uma cópia pelo menos uma vez por mês.</p>
+    </div>
     <div class="card wide"><h3>Sua conta</h3>
       <p style="margin:0 0 12px">Você entrou como <b>${esc(user?.email)}</b>.</p>
       <div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn ghost" type="button" id="trocarSenha">Trocar minha senha</button><button class="btn ghost" type="button" id="sair2">Sair</button></div>
@@ -588,7 +715,7 @@ V.config = () => {
 };
 
 function render(){
-  if(!user || carregados.size < 7) return;
+  if(!user || carregados.size < NCARGA) return;
   tick();
   renderTabs();
   document.getElementById('view').innerHTML = V[tab]();
@@ -613,7 +740,7 @@ function falha(e){
   }
 }
 function assinar(){
-  const marcar = k => { const antes = carregados.size; carregados.add(k); if(antes<7 && carregados.size===7){ mostrar('app'); render(); } else atualizar(); };
+  const marcar = k => { const antes = carregados.size; carregados.add(k); if(antes<NCARGA && carregados.size===NCARGA){ mostrar('app'); render(); } else atualizar(); };
   unsubs.push(onSnapshot(doc(db,'config','geral'), s => {
     if(s.exists()){ const c = s.data(); S.profs = c.profs?.length ? c.profs : DEF.profs; S.procs = Array.isArray(c.procs) ? c.procs : DEF.procs; S.taxas = {...DEF.taxas, ...c.taxas}; }
     else if(!cfgCriada && !s.metadata.fromCache){ cfgCriada = true; saveConfig(); }
@@ -638,7 +765,7 @@ onAuthStateChanged(auth, u => {
 });
 
 document.addEventListener('click', e => {
-  const t = e.target.closest('[data-tab],[data-go],[data-day],[data-hoje],[data-atender],[data-sel],[data-sent],[data-st],[data-del],[data-delproc],[data-usar],[data-comprar],#addProc,#sair,#sair2,#sair3,#esqueci,#trocarSenha');
+  const t = e.target.closest('[data-tab],[data-go],[data-day],[data-hoje],[data-atender],[data-sel],[data-sent],[data-st],[data-del],[data-delproc],[data-usar],[data-comprar],[data-abrirpac],[data-ficha],[data-voltarpac],[data-imprimir],[data-editpac],[data-plano],[data-delplano],#addProc,#backup,#sair,#sair2,#sair3,#esqueci,#trocarSenha');
   if(!t) return;
   if(['sair','sair2','sair3'].includes(t.id)) return signOut(auth);
   if(t.id==='esqueci'){
@@ -648,7 +775,18 @@ document.addEventListener('click', e => {
     return;
   }
   if(t.id==='trocarSenha'){ sendPasswordResetEmail(auth, user.email).then(()=>toast(`Enviamos um link para ${user.email}`)).catch(erro); return; }
-  if(t.dataset.tab) return go(t.dataset.tab);
+  if(t.dataset.tab){ if(t.dataset.tab==='pacientes'){ pacSel = null; pacEdit = null; } return go(t.dataset.tab); }
+  if(t.id==='backup') return baixarBackup();
+  if(t.dataset.abrirpac) return abrirFicha(t.dataset.abrirpac);
+  if(t.dataset.ficha) return abrirFicha(garantirPac(t.dataset.ficha, t.dataset.fone||''));
+  if(t.dataset.voltarpac){ pacSel = null; pacEdit = null; return render(); }
+  if(t.dataset.imprimir) return window.print();
+  if('editpac' in t.dataset){ pacEdit = t.dataset.editpac || null; return render(); }
+  if(t.dataset.plano){ const p = S.pac.find(x=>x.id===pacSel); if(!p) return;
+    put('pacientes', {...p, plano:p.plano.map(it=>it.id===t.dataset.plano?{...it, feito:!it.feito, feitoEm:!it.feito?TODAY:''}:it)}); return render(); }
+  if(t.dataset.delplano){ const p = S.pac.find(x=>x.id===pacSel); if(!p) return;
+    if(!t.classList.contains('armed')){ t.classList.add('armed'); t.textContent='Excluir?'; return; }
+    put('pacientes', {...p, plano:p.plano.filter(it=>it.id!==t.dataset.delplano)}); render(); return toast('Item excluído'); }
   if(t.dataset.go) return go(t.dataset.go);
   if(t.dataset.day){ agDay = addDays(agDay, +t.dataset.day); return render(); }
   if(t.dataset.hoje){ agDay = TODAY; return render(); }
@@ -689,6 +827,7 @@ document.addEventListener('click', e => {
   if(t.id==='addProc'){ S.procs = [...S.procs, {id:novoId(),nome:'Novo procedimento',valor:0}]; saveConfig(); render(); const el=[...document.querySelectorAll('[id^=prNome_]')].pop(); el.focus(); el.select(); return; }
 });
 document.addEventListener('input', e => {
+  if(e.target.id==='pacBusca'){ const q = normN(e.target.value); document.querySelectorAll('#pacLista .pac-row').forEach(b=>{ b.hidden = !!q && !b.dataset.busca.includes(q); }); }
   if(['atValor','atForma','atParc'].includes(e.target.id)) calcAt();
 });
 document.addEventListener('change', e => {
@@ -708,10 +847,22 @@ document.addEventListener('submit', e => {
     return;
   }
   if(document.activeElement && document.activeElement.blur) document.activeElement.blur();
-  if(id==='fAg'){ put('agenda', {id:novoId(),data:$('agData'),hora:$('agHora'),paciente:$('agPac').trim(),fone:$('agFone').replace(/\D/g,''),prof:$('agProf'),proc:$('agProc'),status:'pendente'});
+  if(id==='fPac'){ const pid = garantirPac($('npNome'), $('npFone').replace(/\D/g,'')); const p = S.pac.find(x=>x.id===pid); if(p && $('npNasc') && !p.nasc) put('pacientes', {...p, nasc:$('npNasc')}); toast('Ficha pronta'); return abrirFicha(pid); }
+  if(id==='fDados'){ const p = S.pac.find(x=>x.id===pacSel); if(!p) return;
+    put('pacientes', {...p, nome:$('pdNome').trim()||p.nome, fone:$('pdFone').replace(/\D/g,''), nasc:$('pdNasc'), cpf:$('pdCpf').trim(), endereco:$('pdEnd').trim()}); pacEdit = null; render(); return toast('Dados salvos'); }
+  if(id==='fAnam'){ const p = S.pac.find(x=>x.id===pacSel); if(!p) return; const g = $('anGest');
+    put('pacientes', {...p, anamnese:{alergias:$('anAlerg').trim(), medicamentos:$('anMed').trim(), doencas:$('anDoen').trim(), gestante: g==='sim'?true:g==='nao'?false:null, obs:$('anObs').trim()}}); pacEdit = null; render(); return toast('Anamnese salva'); }
+  if(id==='fPlano'){ const p = S.pac.find(x=>x.id===pacSel); if(!p) return;
+    put('pacientes', {...p, plano:[...p.plano, {id:novoId(), texto:$('plTexto').trim(), feito:false, criadoEm:TODAY}]}); render(); return toast('Adicionado ao plano'); }
+  if(id==='fEvo'){ const p = S.pac.find(x=>x.id===pacSel); if(!p) return;
+    if(!$('evProc').trim() && !$('evObs').trim()) return toast('Escreva o procedimento ou o que foi feito');
+    put('evolucoes', {id:novoId(), pacienteId:p.id, paciente:p.nome, data:$('evData'), prof:$('evProf'), dentes:$('evDentes').trim(), proc:$('evProc').trim(), obs:$('evObs').trim()}); render(); return toast('Evolução salva'); }
+  if(id==='fAg'){ put('agenda', {id:novoId(),pacienteId:garantirPac($('agPac'), $('agFone').replace(/\D/g,'')),data:$('agData'),hora:$('agHora'),paciente:$('agPac').trim(),fone:$('agFone').replace(/\D/g,''),prof:$('agProf'),proc:$('agProc'),status:'pendente'});
     agDay = $('agData'); render(); toast('Agendamento salvo'); }
   if(id==='fAt'){ const f=$('atForma'), p=f==='Crédito parcelado'?+$('atParc'):1;
-    put('atendimentos', {id:novoId(),data:$('atData'),paciente:$('atPac').trim(),prof:$('atProf'),tipo:$('atTipo'),proc:$('atProc'),valor:parseFloat($('atValor'))||0,forma:f,parc:p,taxa:taxaDe(f,p)});
+    const conhecido = pacientes().find(x=>normN(x.nome)===normN($('atPac'))), pid = garantirPac($('atPac'), conhecido ? conhecido.fone : '');
+    put('atendimentos', {id:novoId(),pacienteId:pid,data:$('atData'),paciente:$('atPac').trim(),prof:$('atProf'),tipo:$('atTipo'),proc:$('atProc'),valor:parseFloat($('atValor'))||0,forma:f,parc:p,taxa:taxaDe(f,p)});
+    if($('atDentes').trim() || $('atObs').trim()) put('evolucoes', {id:novoId(),pacienteId:pid,paciente:$('atPac').trim(),data:$('atData'),prof:$('atProf'),dentes:$('atDentes').trim(),proc:$('atProc'),obs:$('atObs').trim()});
     render(); toast('Atendimento salvo e lançado no caixa'); }
   if(id==='fDe'){ const mensal = document.getElementById('deMensal').checked;
     put('despesas', {id:novoId(),data:$('deData'),tipo:$('deTipo'),desc:$('deDesc').trim(),valor:parseFloat($('deValor'))||0,mensal});

@@ -144,6 +144,12 @@ label.chk input{width:auto;accent-color:var(--plum)}
 .login form{display:flex;flex-direction:column;gap:12px;text-align:left}
 .carregando{min-height:60vh;display:grid;place-items:center;color:var(--muted)}
 @media (prefers-reduced-motion:no-preference){.bar i{transition:width .4s ease}}
+.sug{position:relative}
+.sug-lista{position:absolute;left:0;right:0;top:100%;z-index:5;margin-top:4px;background:var(--surface);border:1px solid var(--line);border-radius:8px;box-shadow:0 8px 20px rgba(0,0,0,.14);overflow:hidden}
+.sug-lista button{display:block;width:100%;text-align:left;padding:11px 12px;border:0;border-bottom:1px solid var(--line);background:none;font:inherit;font-size:.95rem;font-weight:600;color:var(--ink);cursor:pointer}
+.sug-lista button:last-child{border-bottom:0}
+.sug-lista button:hover,.sug-lista button:focus-visible{background:var(--plum-soft)}
+.sug-lista small{display:block;font-weight:400;color:var(--muted);font-size:.8rem}
 .pac-row{display:flex;justify-content:space-between;align-items:center;gap:10px;width:100%;text-align:left;background:none;border:0;border-bottom:1px solid var(--line);padding:12px 4px;font:inherit;color:var(--ink);cursor:pointer}
 .pac-row:hover{background:var(--plum-soft)}
 .pac-row small{display:block;color:var(--muted);font-size:.8rem}
@@ -248,8 +254,9 @@ let db;
 try { db = initializeFirestore(fb, {localCache: persistentLocalCache({tabManager: persistentMultipleTabManager()})}); }
 catch(e){ db = initializeFirestore(fb, {}); }
 
+const VERSAO = '19/10/2026 · 5'; // aumentar a cada envio ao GitHub, para conferir se o celular pegou a atualização
 const FORMAS = ['Pix','Dinheiro','Débito','Crédito à vista','Crédito parcelado'];
-const TABS = [['inicio','Início'],['dash','Dashboard'],['agenda','Agenda'],['pacientes','Pacientes'],['confirm','Confirmações'],['atend','Atendimentos'],['caixa','Fluxo de caixa'],['estoque','Estoque'],['rel','Relatórios'],['config','Configurações']];
+const TABS = [['inicio','Início'],['dash','Dashboard'],['agenda','Agenda'],['pacientes','Pacientes'],['confirm','Confirmações'],['atend','Atendimentos'],['caixa','Fluxo de caixa'],['despesas','Despesas'],['estoque','Estoque'],['rel','Relatórios'],['config','Configurações']];
 const brl = v => (v||0).toLocaleString('pt-BR',{style:'currency',currency:'BRL'});
 const pct = v => (v||0).toLocaleString('pt-BR',{maximumFractionDigits:2})+'%';
 const iso = d => d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
@@ -274,8 +281,9 @@ const DEF = {
   procs: [['Avaliação',100],['Limpeza (profilaxia)',180],['Restauração em resina',250],['Extração simples',300],['Aplicação de flúor',80],['Clareamento',900],['Tratamento de canal',1200],['Manutenção ortodôntica',150]].map(([nome,valor],i)=>({id:'pr'+(i+1),nome,valor})),
   taxas: TAXAS_EXEMPLO
 };
-const vazio = () => ({profs:DEF.profs, procs:DEF.procs, taxas:{...DEF.taxas}, agenda:[], atend:[], desp:[], estoque:[], movEst:[], conf:[], pac:[], evo:[]});
+const vazio = () => ({profs:DEF.profs, procs:DEF.procs, taxas:{...DEF.taxas}, colabs:[], agenda:[], atend:[], desp:[], estoque:[], movEst:[], conf:[], pac:[], evo:[]});
 let S = vazio(), user = null, unsubs = [], carregados = new Set(), cfgCriada = false;
+let despMes = null, despFiltro = '';
 let tab = 'inicio', agDay = TODAY, selConf = null, prefill = null, estSel = null, estTipo = 'Saída', pacSel = null, pacEdit = null;
 
 const num = v => +v || 0;
@@ -301,7 +309,7 @@ function put(col, o){
   setDoc(doc(db,col,o.id), corpo(o)).catch(erro);
 }
 function del(col, id){ S[COLS[col]] = S[COLS[col]].filter(x=>x.id!==id); deleteDoc(doc(db,col,id)).catch(erro); }
-function saveConfig(){ setDoc(doc(db,'config','geral'), {profs:S.profs, procs:S.procs, taxas:S.taxas}).catch(erro); }
+function saveConfig(){ setDoc(doc(db,'config','geral'), {profs:S.profs, procs:S.procs, taxas:S.taxas, colabs:S.colabs}).catch(erro); }
 
 const profNome = id => (S.profs.find(p=>p.id===id)||{}).nome || '—';
 const profCurto = id => profNome(id).replace(/\s*\(.*\)/,'');
@@ -315,7 +323,8 @@ const viaClaude = a => a.origem==='claude' ? '<span class="chip c-claude">via Cl
 
 const ultimoDia = m => new Date(+m.slice(0,4), +m.slice(5,7), 0).getDate();
 // Despesa com mensal:true se repete todo mês a partir do mês de "data", no mesmo dia (ou no último dia do mês).
-const despDoMes = m => S.desp.flatMap(d => !d.mensal ? [d] : d.data.slice(0,7) <= m ? [{...d, data: m+'-'+String(Math.min(+d.data.slice(8), ultimoDia(m))).padStart(2,'0')}] : []);
+// Pago: despesa avulsa usa o campo "pago" (antigas sem o campo contam como pagas); a que se repete todo mês guarda os meses pagos em "pagos".
+const despDoMes = m => S.desp.flatMap(d => !d.mensal ? [{...d, pago: d.pago!==false}] : d.data.slice(0,7) <= m ? [{...d, data: m+'-'+String(Math.min(+d.data.slice(8), ultimoDia(m))).padStart(2,'0'), mes:m, pago:(d.pagos||[]).includes(m)}] : []);
 function resumo(m = MES, ateDia = 31){
   const ok = x => x.data.startsWith(m) && +x.data.slice(8) <= ateDia;
   const at = S.atend.filter(ok), de = despDoMes(m).filter(ok);
@@ -431,7 +440,7 @@ V.agenda = () => {
       ${lista.length?lista.map(a=>`<div class="slot"><span class="h">${a.hora}</span><div class="who"><b>${esc(a.paciente)}</b><small>${esc(a.proc)} · ${esc(profCurto(a.prof))}${a.fone?' · '+esc(a.fone):''}</small></div><div class="act">${viaClaude(a)}${chip(stAg(a))}<button class="btn sm ghost" data-ficha="${esc(a.paciente)}" data-fone="${esc(a.fone)}">Ficha</button><button class="btn sm ghost" data-atender="${a.id}">Registrar atendimento</button><button class="btn sm danger" data-del="agenda:${a.id}">Excluir</button></div></div>`).join(''):'<p class="empty">Nenhum horário marcado neste dia. Use o formulário ao lado para agendar.</p>'}
     </div>
     <form class="card" id="fAg" style="align-self:start"><h3>Novo agendamento</h3>
-      <div class="row"><label>Paciente<input id="agPac" required list="pacList" autocomplete="off" placeholder="Nome completo"><datalist id="pacList">${pacientes().map(p=>`<option value="${esc(p.nome)}">`).join('')}</datalist></label></div>
+      <div class="row"><label class="sug">Paciente<input id="agPac" required autocomplete="off" placeholder="Digite o nome" data-sug="agFone"><div class="sug-lista" id="sug-agPac" hidden></div></label></div>
       <div class="row"><label>WhatsApp do paciente<input id="agFone" inputmode="tel" placeholder="(88) 99999-0000"></label></div>
       <div class="row"><label>Data<input id="agData" type="date" required value="${agDay}"></label><label>Horário<input id="agHora" type="time" required value="08:00"></label></div>
       <div class="row"><label>Profissional<select id="agProf">${opt(S.profs.map(p=>[p.id,p.nome]))}</select></label></div>
@@ -475,7 +484,7 @@ V.atend = () => {
   return `<h2>Atendimentos</h2><p class="lead">Registre cada atendimento. Escolhendo cartão, a taxa da maquineta é descontada automaticamente e o valor líquido vai para o caixa.</p>
   <div class="grid split">
     <form class="card" id="fAt" style="align-self:start"><h3>Registrar atendimento</h3>
-      <div class="row"><label>Paciente<input id="atPac" required list="pacList2" autocomplete="off" value="${esc(p.paciente||'')}" placeholder="Nome completo"><datalist id="pacList2">${pacientes().map(x=>`<option value="${esc(x.nome)}">`).join('')}</datalist></label><label>Data<input id="atData" type="date" required value="${p.data||TODAY}"></label></div>
+      <div class="row"><label class="sug">Paciente<input id="atPac" required autocomplete="off" value="${esc(p.paciente||'')}" placeholder="Digite o nome" data-sug=""><div class="sug-lista" id="sug-atPac" hidden></div></label><label>Data<input id="atData" type="date" required value="${p.data||TODAY}"></label></div>
       <div class="row"><label>Profissional<select id="atProf">${S.profs.map(x=>`<option value="${x.id}" ${x.id===p.prof?'selected':''}>${esc(x.nome)}</option>`).join('')}</select></label>
         <label>Tipo de atendimento<select id="atTipo"><option>Particular</option><option>Retorno</option><option>Convênio</option><option>Urgência</option></select></label></div>
       <div class="row"><label>Procedimento<select id="atProc">${S.procs.map(x=>`<option ${x.nome===procSel?'selected':''}>${esc(x.nome)}</option>`).join('')}</select></label><label>Valor (R$)<input id="atValor" type="number" min="0" step="0.01" required value="${valor}"></label></div>
@@ -496,6 +505,61 @@ function calcAt(){
   const p = f==='Crédito parcelado'? +document.getElementById('atParc').value : 1, t = taxaDe(f,p);
   document.getElementById('calc').innerHTML = `<div><span>Valor cobrado</span><b>${brl(v)}</b></div><div><span>Taxa da maquineta (${pct(t)})</span><b class="neg">− ${brl(v*t/100)}</b></div><div><span>Você recebe</span><b class="pos">${brl(v*(1-t/100))}</b></div>`;
 }
+
+// Despesas: todas as saídas do consultório, inclusive o pagamento dos colaboradores (protético, dentista parceira, especialistas).
+const DCAT = ['Colaboradores','Laboratório / prótese','Aluguel e condomínio','Água, luz, internet e telefone','Material odontológico','Impostos e contador','Funcionários','Manutenção e equipamentos','Marketing','Outros'];
+const DFIXA = ['Aluguel e condomínio','Água, luz, internet e telefone','Impostos e contador','Funcionários'];
+const FUNCOES = ['Dentista parceira','Implantodontista','Endodontista','Ortodontista','Protético','Secretária','Auxiliar','Outro'];
+const DFORMAS = ['Pix','Dinheiro','Transferência','Boleto','Cartão'];
+const mesTxt = m => new Date(m+'-15T12:00').toLocaleDateString('pt-BR',{month:'long',year:'numeric'});
+const addMes = (m,n) => { const d = new Date(m+'-15T12:00'); d.setMonth(d.getMonth()+n); return iso(d).slice(0,7); };
+const colabDe = id => S.colabs.find(c=>c.id===id);
+const catDe = d => d.cat || (/^Estoque:/.test(d.desc) ? 'Material odontológico' : 'Outros');
+const sitChip = d => d.pago ? '<span class="chip c-ok">Pago</span>' : d.data < TODAY ? '<span class="chip c-bad">Atrasada</span>' : '<span class="chip c-warn">A pagar</span>';
+
+V.despesas = () => {
+  const m = despMes || MES;
+  const todas = despDoMes(m).filter(d=>d.data.startsWith(m)).sort((a,b)=>a.data.localeCompare(b.data));
+  const filtra = d => !despFiltro ? true : despFiltro==='apagar' ? !d.pago : despFiltro.startsWith('c:') ? d.colab===despFiltro.slice(2) : catDe(d)===despFiltro;
+  const lista = todas.filter(filtra);
+  const soma = ds => ds.reduce((s,d)=>s+d.valor,0);
+  const tot = soma(todas), pago = soma(todas.filter(d=>d.pago)), atras = todas.filter(d=>!d.pago && d.data<TODAY).length;
+  const porCat = {}; todas.forEach(d=>{ const k = catDe(d); porCat[k] = (porCat[k]||0) + d.valor; });
+  const colabs = S.colabs.map(c=>{ const ds = todas.filter(d=>d.colab===c.id); return {c, tot:soma(ds), pago:soma(ds.filter(d=>d.pago))}; });
+  const optF = [['','Todas'],['apagar','Só a pagar'], ...DCAT.map(c=>[c,c]), ...S.colabs.map(c=>['c:'+c.id, c.nome])];
+  return `<h2>Despesas</h2><p class="lead">Todas as saídas do consultório, inclusive o pagamento dos colaboradores. Elas também entram no Fluxo de caixa e no Dashboard.</p>
+  <div class="daynav"><button class="btn sm ghost" data-dmes="-1" aria-label="Mês anterior">‹</button><b style="text-transform:capitalize">${mesTxt(m)}</b><button class="btn sm ghost" data-dmes="1" aria-label="Próximo mês">›</button></div>
+  <div class="kpis">
+    <div class="kpi"><span>Total do mês</span><b>${brl(tot)}</b></div>
+    <div class="kpi"><span>Pago</span><b class="pos">${brl(pago)}</b></div>
+    <div class="kpi"><span>A pagar${atras?` · ${atras} atrasada${atras>1?'s':''}`:''}</span><b class="${tot-pago?'neg':''}">${brl(tot-pago)}</b></div>
+    <div class="kpi main"><span>Colaboradores</span><b>${brl(soma(todas.filter(d=>d.colab)))}</b></div>
+  </div>
+  <div class="grid split">
+    <div class="card"><div style="display:flex;justify-content:space-between;align-items:end;gap:12px;flex-wrap:wrap;margin-bottom:8px"><h3 style="margin:0">Lançamentos · ${lista.length}</h3><label style="min-width:180px">Mostrar<select id="dpFiltro">${optF.map(([v,l])=>`<option value="${esc(v)}" ${v===despFiltro?'selected':''}>${esc(l)}</option>`).join('')}</select></label></div>
+      ${lista.length?`<div class="tbl-wrap"><table class="resp"><thead><tr><th>Venc.</th><th>Descrição</th><th>Categoria</th><th class="r">Valor</th><th>Situação</th><th></th></tr></thead><tbody>
+      ${lista.map(d=>{ const c = colabDe(d.colab); return `<tr><td class="num" data-label="Vencimento">${fmtD(d.data).slice(0,5)}</td><td class="full">${viaClaude(d)}<b>${esc(d.desc)}</b>${d.mensal?' <small class="muted">· todo mês</small>':''}<br><small class="muted">${[c?c.nome+' ('+c.funcao+')':'', d.paciente?'paciente: '+d.paciente:'', d.forma||''].filter(Boolean).map(esc).join(' · ')}</small></td><td data-label="Categoria">${esc(catDe(d))}</td><td class="r num" data-label="Valor">${brl(d.valor)}</td><td data-label="Situação">${sitChip(d)}</td><td class="acao" style="white-space:nowrap">${d.pago?'':`<button class="btn sm ghost" data-pagar="${d.id}|${m}">Marcar pago</button> `}<button class="x" data-del="despesas:${d.id}" aria-label="Excluir despesa" title="Excluir">✕</button></td></tr>`; }).join('')}
+      </tbody></table></div>`:'<p class="empty">Nenhuma despesa neste mês.</p>'}
+      <p class="note">Excluir uma despesa marcada "todo mês" apaga ela de todos os meses.</p>
+    </div>
+    <form class="card" id="fDesp" style="align-self:start"><h3>Lançar despesa</h3>
+      <div class="row"><label>Data ou vencimento<input id="dpData" type="date" required value="${m===MES?TODAY:m+'-01'}"></label><label>Valor (R$)<input id="dpValor" type="number" min="0" step="0.01" required placeholder="0,00"></label></div>
+      <div class="row"><label>Categoria<select id="dpCat">${DCAT.map(c=>`<option>${c}</option>`).join('')}</select></label><label>Colaborador<select id="dpColab"><option value="">— nenhum —</option>${S.colabs.map(c=>`<option value="${c.id}">${esc(c.nome)} (${esc(c.funcao)})</option>`).join('')}</select></label></div>
+      <div class="row"><label>Descrição<input id="dpDesc" required placeholder="Ex.: Pagamento implante, prótese, aluguel"></label></div>
+      <div class="row"><label class="sug">Paciente (opcional)<input id="dpPac" autocomplete="off" placeholder="Se for de um paciente" data-sug=""><div class="sug-lista" id="sug-dpPac" hidden></div></label></div>
+      <div class="row"><label>Forma de pagamento<select id="dpForma">${DFORMAS.map(f=>`<option>${f}</option>`).join('')}</select></label><label>Situação<select id="dpSit"><option value="pago">Pago</option><option value="apagar">A pagar</option></select></label><label>Tipo<select id="dpTipo"><option>Variável</option><option>Fixa</option></select></label></div>
+      <label class="chk"><input id="dpMensal" type="checkbox"> Repetir todo mês, neste mesmo dia</label>
+      <button class="btn" type="submit">Lançar despesa</button>
+    </form>
+  </div>
+  <div class="grid g2 mt">
+    <div class="card"><h3>Por categoria</h3>${bars(Object.entries(porCat).sort((a,b)=>b[1]-a[1]).map(([k,v])=>({l:k, v, x: tot?Math.round(v/tot*100)+'%':''})))}</div>
+    <div class="card"><h3>Colaboradores</h3>
+      ${colabs.length?`<div class="tbl-wrap"><table class="resp"><thead><tr><th>Nome</th><th class="r">No mês</th><th class="r">A pagar</th><th></th></tr></thead><tbody>${colabs.map(({c,tot,pago})=>`<tr><td class="full"><b>${esc(c.nome)}</b><br><small class="muted">${esc(c.funcao)}</small></td><td class="r num" data-label="No mês">${brl(tot)}</td><td class="r num ${tot-pago?'neg':''}" data-label="A pagar">${brl(tot-pago)}</td><td class="acao" style="white-space:nowrap"><button class="btn sm ghost" data-dfiltro="c:${c.id}">Ver</button> <button class="x" data-delcolab="${c.id}" aria-label="Remover colaborador" title="Remover">✕</button></td></tr>`).join('')}</tbody></table></div>`:'<p class="muted" style="margin:0">Nenhum colaborador cadastrado.</p>'}
+      <form id="fColab" class="mt"><div class="row"><label>Nome<input id="clNome" required placeholder="Ex.: Dr. Fulano"></label><label>Função<select id="clFuncao">${FUNCOES.map(f=>`<option>${f}</option>`).join('')}</select></label></div><button class="btn ghost" type="submit">+ Cadastrar colaborador</button></form>
+    </div>
+  </div>`;
+};
 
 V.caixa = () => {
   const r = resumo();
@@ -716,6 +780,7 @@ V.config = () => {
       <p style="margin:0 0 12px">Você entrou como <b>${esc(user?.email)}</b>.</p>
       <div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn ghost" type="button" id="trocarSenha">Trocar minha senha</button><button class="btn ghost" type="button" id="sair2">Sair</button></div>
       <p class="note">Seu código de usuário (para liberar acesso nas regras do Firebase): <code>${esc(user?.uid)}</code></p>
+      <p class="note">Versão do sistema: <b>${VERSAO}</b></p>
     </div>
   </div>`;
 };
@@ -748,7 +813,7 @@ function falha(e){
 function assinar(){
   const marcar = k => { const antes = carregados.size; carregados.add(k); if(antes<NCARGA && carregados.size===NCARGA){ mostrar('app'); render(); } else atualizar(); };
   unsubs.push(onSnapshot(doc(db,'config','geral'), s => {
-    if(s.exists()){ const c = s.data(); S.profs = c.profs?.length ? c.profs : DEF.profs; S.procs = Array.isArray(c.procs) ? c.procs : DEF.procs; S.taxas = {...DEF.taxas, ...c.taxas}; }
+    if(s.exists()){ const c = s.data(); S.profs = c.profs?.length ? c.profs : DEF.profs; S.procs = Array.isArray(c.procs) ? c.procs : DEF.procs; S.taxas = {...DEF.taxas, ...c.taxas}; S.colabs = Array.isArray(c.colabs) ? c.colabs : []; }
     else if(!cfgCriada && !s.metadata.fromCache){ cfgCriada = true; saveConfig(); }
     marcar('config');
   }, falha));
@@ -771,7 +836,11 @@ onAuthStateChanged(auth, u => {
 });
 
 document.addEventListener('click', e => {
-  const t = e.target.closest('[data-tab],[data-go],[data-day],[data-hoje],[data-atender],[data-sel],[data-sent],[data-st],[data-del],[data-delproc],[data-usar],[data-comprar],[data-abrirpac],[data-ficha],[data-voltarpac],[data-imprimir],[data-editpac],[data-plano],[data-delplano],#addProc,#backup,#sair,#sair2,#sair3,#esqueci,#trocarSenha');
+  const esc_ = e.target.closest('[data-escolher]');
+  if(esc_){ const campo = document.getElementById(esc_.dataset.campo); campo.value = esc_.dataset.escolher; esc_.parentElement.hidden = true;
+    const alvo = campo.dataset.sug && document.getElementById(campo.dataset.sug); if(alvo && esc_.dataset.fone) alvo.value = esc_.dataset.fone; return; }
+  if(!e.target.closest('.sug')) document.querySelectorAll('.sug-lista').forEach(l=>l.hidden = true);
+  const t = e.target.closest('[data-tab],[data-go],[data-day],[data-hoje],[data-atender],[data-sel],[data-sent],[data-st],[data-del],[data-delproc],[data-usar],[data-comprar],[data-abrirpac],[data-ficha],[data-voltarpac],[data-imprimir],[data-editpac],[data-plano],[data-delplano],[data-dmes],[data-dfiltro],[data-pagar],[data-delcolab],#addProc,#backup,#sair,#sair2,#sair3,#esqueci,#trocarSenha');
   if(!t) return;
   if(['sair','sair2','sair3'].includes(t.id)) return signOut(auth);
   if(t.id==='esqueci'){
@@ -790,6 +859,13 @@ document.addEventListener('click', e => {
   if('editpac' in t.dataset){ pacEdit = t.dataset.editpac || null; return render(); }
   if(t.dataset.plano){ const p = S.pac.find(x=>x.id===pacSel); if(!p) return;
     put('pacientes', {...p, plano:p.plano.map(it=>it.id===t.dataset.plano?{...it, feito:!it.feito, feitoEm:!it.feito?TODAY:''}:it)}); return render(); }
+  if(t.dataset.dmes){ despMes = addMes(despMes || MES, +t.dataset.dmes); return render(); }
+  if('dfiltro' in t.dataset){ despFiltro = t.dataset.dfiltro; return render(); }
+  if(t.dataset.pagar){ const [id, mes] = t.dataset.pagar.split('|'); const d = S.desp.find(x=>x.id===id); if(!d) return;
+    put('despesas', d.mensal ? {...d, pagos:[...new Set([...(d.pagos||[]), mes])]} : {...d, pago:true, pagoEm:TODAY}); render(); return toast('Marcada como paga'); }
+  if(t.dataset.delcolab){
+    if(!t.classList.contains('armed')){ t.classList.add('armed'); t.textContent='Remover?'; return; }
+    S.colabs = S.colabs.filter(c=>c.id!==t.dataset.delcolab); saveConfig(); if(despFiltro==='c:'+t.dataset.delcolab) despFiltro=''; render(); return toast('Colaborador removido'); }
   if(t.dataset.delplano){ const p = S.pac.find(x=>x.id===pacSel); if(!p) return;
     if(!t.classList.contains('armed')){ t.classList.add('armed'); t.textContent='Excluir?'; return; }
     put('pacientes', {...p, plano:p.plano.filter(it=>it.id!==t.dataset.delplano)}); render(); return toast('Item excluído'); }
@@ -833,6 +909,13 @@ document.addEventListener('click', e => {
   if(t.id==='addProc'){ S.procs = [...S.procs, {id:novoId(),nome:'Novo procedimento',valor:0}]; saveConfig(); render(); const el=[...document.querySelectorAll('[id^=prNome_]')].pop(); el.focus(); el.select(); return; }
 });
 document.addEventListener('input', e => {
+  // Sugestões de pacientes enquanto digita (sem acento e sem diferença de maiúsculas, qualquer parte do nome)
+  if('sug' in e.target.dataset){
+    const q = normN(e.target.value), lista = document.getElementById('sug-'+e.target.id);
+    const achados = q.length < 2 ? [] : pacientes().filter(p=>normN(p.nome).includes(q)).slice(0,6);
+    lista.innerHTML = achados.map(p=>`<button type="button" data-escolher="${esc(p.nome)}" data-fone="${esc(p.fone)}" data-campo="${e.target.id}">${esc(p.nome)}<small>${p.fone?esc(fmtFone(p.fone)):'sem WhatsApp'}</small></button>`).join('');
+    lista.hidden = !achados.length;
+  }
   if(e.target.id==='pacBusca'){ const q = normN(e.target.value); document.querySelectorAll('#pacLista .pac-row').forEach(b=>{ b.hidden = !!q && !b.dataset.busca.includes(q); }); }
   if(['atValor','atForma','atParc'].includes(e.target.id)) calcAt();
 });
@@ -840,6 +923,11 @@ document.addEventListener('change', e => {
   if(e.target.id==='atProc'){ const p = S.procs.find(x=>x.nome===e.target.value); if(p) document.getElementById('atValor').value = p.valor; calcAt(); }
   if(['atForma','atParc'].includes(e.target.id)) calcAt();
   if(e.target.id==='agPac'){ const p = pacientes().find(x=>x.nome.toLowerCase()===e.target.value.trim().toLowerCase()); const f = document.getElementById('agFone'); if(p && p.fone && !f.value) f.value = p.fone; }
+  if(e.target.id==='dpFiltro'){ despFiltro = e.target.value; return render(); }
+  if(e.target.id==='dpCat') document.getElementById('dpTipo').value = DFIXA.includes(e.target.value) ? 'Fixa' : 'Variável';
+  if(e.target.id==='dpColab' && e.target.value){ const c = colabDe(e.target.value), cat = document.getElementById('dpCat'), ds = document.getElementById('dpDesc');
+    if(c && c.funcao==='Protético') cat.value = 'Laboratório / prótese'; else cat.value = 'Colaboradores';
+    document.getElementById('dpTipo').value = 'Variável'; if(c && !ds.value.trim()) ds.value = 'Pagamento ' + c.nome; }
   if(e.target.id==='mvTipo'){ estTipo = e.target.value; document.getElementById('mvEnt').hidden = estTipo!=='Entrada'; }
   if(e.target.id==='mvItem'){ estSel = e.target.value; const i = S.estoque.find(x=>x.id===estSel); if(i) document.getElementById('mvCusto').value = i.custo; }
 });
@@ -870,6 +958,12 @@ document.addEventListener('submit', e => {
     put('atendimentos', {id:novoId(),pacienteId:pid,data:$('atData'),paciente:$('atPac').trim(),prof:$('atProf'),tipo:$('atTipo'),proc:$('atProc'),valor:parseFloat($('atValor'))||0,forma:f,parc:p,taxa:taxaDe(f,p)});
     if($('atDentes').trim() || $('atObs').trim()) put('evolucoes', {id:novoId(),pacienteId:pid,paciente:$('atPac').trim(),data:$('atData'),prof:$('atProf'),dentes:$('atDentes').trim(),proc:$('atProc'),obs:$('atObs').trim()});
     render(); toast('Atendimento salvo e lançado no caixa'); }
+  if(id==='fDesp'){ const mensal = document.getElementById('dpMensal').checked, pago = $('dpSit')==='pago', data = $('dpData'), pacNome = $('dpPac').trim();
+    const pac = pacNome ? S.pac.find(x=>normN(x.nome)===normN(pacNome)) : null;
+    put('despesas', {id:novoId(), data, desc:$('dpDesc').trim(), valor:parseFloat($('dpValor'))||0, cat:$('dpCat'), tipo:$('dpTipo'), colab:$('dpColab'), forma:$('dpForma'),
+      paciente: pac ? pac.nome : pacNome, pacienteId: pac ? pac.id : '', mensal, pagoEm: pago ? TODAY : '', ...(mensal ? {pagos: pago ? [data.slice(0,7)] : []} : {pago})});
+    despMes = data.slice(0,7); render(); return toast(mensal ? 'Despesa lançada para todos os meses' : 'Despesa lançada'); }
+  if(id==='fColab'){ S.colabs = [...S.colabs, {id:novoId(), nome:$('clNome').trim(), funcao:$('clFuncao')}]; saveConfig(); render(); return toast('Colaborador cadastrado'); }
   if(id==='fDe'){ const mensal = document.getElementById('deMensal').checked;
     put('despesas', {id:novoId(),data:$('deData'),tipo:$('deTipo'),desc:$('deDesc').trim(),valor:parseFloat($('deValor'))||0,mensal});
     render(); toast(mensal?'Despesa lançada para todos os meses':'Despesa lançada'); }

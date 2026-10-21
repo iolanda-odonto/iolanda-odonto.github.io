@@ -144,6 +144,14 @@ label.chk input{width:auto;accent-color:var(--plum)}
 .login form{display:flex;flex-direction:column;gap:12px;text-align:left}
 .carregando{min-height:60vh;display:grid;place-items:center;color:var(--muted)}
 @media (prefers-reduced-motion:no-preference){.bar i{transition:width .4s ease}}
+.cx-topo{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:4px}
+.cx-topo h2{margin:0}
+.seg{display:inline-flex;border:1px solid var(--line);border-radius:10px;overflow:hidden;background:var(--surface)}
+.seg button{border:0;background:none;padding:8px 18px;font:inherit;font-weight:600;color:var(--muted);cursor:pointer}
+.seg button[aria-pressed="true"]{background:var(--plum);color:var(--plum-ink)}
+.chart .s-pos{fill:var(--ok)} .chart .s-neg{fill:var(--bad)}
+table.cx-dias tbody tr{cursor:pointer}
+table.cx-dias tbody tr:hover,table.cx-dias tbody tr:focus-visible{background:var(--plum-soft);outline:none}
 .sug{position:relative}
 .sug-lista{position:absolute;left:0;right:0;top:100%;z-index:5;margin-top:4px;background:var(--surface);border:1px solid var(--line);border-radius:8px;box-shadow:0 8px 20px rgba(0,0,0,.14);overflow:hidden}
 .sug-lista button{display:block;width:100%;text-align:left;padding:11px 12px;border:0;border-bottom:1px solid var(--line);background:none;font:inherit;font-size:.95rem;font-weight:600;color:var(--ink);cursor:pointer}
@@ -254,7 +262,7 @@ let db;
 try { db = initializeFirestore(fb, {localCache: persistentLocalCache({tabManager: persistentMultipleTabManager()})}); }
 catch(e){ db = initializeFirestore(fb, {}); }
 
-const VERSAO = '19/10/2026 · 5'; // aumentar a cada envio ao GitHub, para conferir se o celular pegou a atualização
+const VERSAO = '21/10/2026 · 6'; // aumentar a cada envio ao GitHub, para conferir se o celular pegou a atualização
 const FORMAS = ['Pix','Dinheiro','Débito','Crédito à vista','Crédito parcelado'];
 const TABS = [['inicio','Início'],['dash','Dashboard'],['agenda','Agenda'],['pacientes','Pacientes'],['confirm','Confirmações'],['atend','Atendimentos'],['caixa','Fluxo de caixa'],['despesas','Despesas'],['estoque','Estoque'],['rel','Relatórios'],['config','Configurações']];
 const brl = v => (v||0).toLocaleString('pt-BR',{style:'currency',currency:'BRL'});
@@ -561,16 +569,77 @@ V.despesas = () => {
   </div>`;
 };
 
-V.caixa = () => {
-  const r = resumo();
+// Fluxo de caixa: visão Mês (a de sempre, mais o dia a dia e o gráfico) e visão Dia.
+let caixaVis = 'mes', caixaDia = null;
+function diaCaixa(d){
+  const at = S.atend.filter(a=>a.data===d), de = despDoMes(d.slice(0,7)).filter(x=>x.data===d);
+  const bruto = at.reduce((s,a)=>s+a.valor,0), liquido = at.reduce((s,a)=>s+liq(a),0);
+  const fixa = de.filter(x=>x.tipo==='Fixa').reduce((s,x)=>s+x.valor,0), vari = de.filter(x=>x.tipo!=='Fixa').reduce((s,x)=>s+x.valor,0);
+  return {d, at, de, bruto, liquido, taxas:bruto-liquido, fixa, vari, saida:fixa+vari, saldo:liquido-fixa-vari};
+}
+function diasDoMes(m){
+  let acum = 0;
+  return [...Array(ultimoDia(m))].map((_,i)=>{ const x = diaCaixa(m+'-'+String(i+1).padStart(2,'0')); acum += x.saldo; return {...x, acum, mov: x.at.length + x.de.length}; });
+}
+const brlCurto = v => { const a = Math.abs(v), s = v<0?'−':''; return a>=1000 ? `${s}${(a/1000).toLocaleString('pt-BR',{maximumFractionDigits:1})} mil` : `${s}${Math.round(a)}`; };
+const segCaixa = () => `<div class="seg" role="group" aria-label="Visão do fluxo de caixa"><button type="button" data-cxvis="dia" aria-pressed="${caixaVis==='dia'}">Dia</button><button type="button" data-cxvis="mes" aria-pressed="${caixaVis==='mes'}">Mês</button></div>`;
+function chartSaldo(dias){
+  const N = dias.length, vals = dias.map(x=>x.saldo), hi = Math.max(0, ...vals), lo = Math.min(0, ...vals), span = (hi - lo) || 1;
+  const W=720, H=220, L=56, R=8, T=14, B=26, cw=(W-L-R)/N, bw=Math.max(cw-4,3), ys = v => T+(H-T-B)*(hi-v)/span, zero = ys(0);
+  let g = `<line class="gl" x1="${L}" x2="${W-R}" y1="${zero}" y2="${zero}" style="stroke:var(--muted)"/><text class="ax" x="${L-6}" y="${zero+4}" text-anchor="end">0</text>`;
+  if(hi>0) g += `<line class="gl" x1="${L}" x2="${W-R}" y1="${ys(hi)}" y2="${ys(hi)}"/><text class="ax" x="${L-6}" y="${ys(hi)+4}" text-anchor="end">${brlCurto(hi)}</text>`;
+  if(lo<0) g += `<line class="gl" x1="${L}" x2="${W-R}" y1="${ys(lo)}" y2="${ys(lo)}"/><text class="ax" x="${L-6}" y="${ys(lo)+4}" text-anchor="end">${brlCurto(lo)}</text>`;
+  dias.forEach((x,i)=>{
+    const bx = L+cw*i+(cw-bw)/2, y0 = Math.min(ys(x.saldo), zero), h = Math.abs(ys(x.saldo)-zero);
+    const lab = (i===0||(i+1)%5===0) ? `<text class="ax" x="${bx+bw/2}" y="${H-6}" text-anchor="middle">${i+1}</text>` : '';
+    g += `<g data-cxdia="${x.d}" style="cursor:pointer"><title>${fmtD(x.d)} · saldo ${brl(x.saldo)}\nEntradas líquidas: ${brl(x.liquido)}\nSaídas: ${brl(x.saida)}</title><rect class="hit" x="${L+cw*i}" y="${T}" width="${cw}" height="${H-T-B}"/>${x.saldo?`<rect class="${x.saldo>0?'s-pos':'s-neg'}" x="${bx}" y="${y0}" width="${bw}" height="${Math.max(h,1.5)}" rx="2"/>`:''}</g>${lab}`;
+  });
+  return `<svg class="chart" viewBox="0 0 ${W} ${H}" role="img" aria-label="Saldo de cada dia do mês">${g}</svg>`;
+}
+// Horário do atendimento: o próprio, ou o do agendamento do mesmo paciente no mesmo dia.
+const horaDe = a => a.hora || (S.agenda.find(g => g.data===a.data && (a.pacienteId && g.pacienteId ? g.pacienteId===a.pacienteId : normN(g.paciente)===normN(a.paciente))) || {}).hora || '';
+
+V.caixa = () => caixaVis==='dia' ? caixaVerDia() : caixaVerMes();
+
+function caixaVerDia(){
+  const d = caixaDia || TODAY, x = diaCaixa(d);
+  const mov = [...x.at.map(a=>({hora:horaDe(a), desc:a.paciente+' · '+a.proc, sub:a.forma+(a.parc>1?' '+a.parc+'x':'')+(a.taxa?' · taxa '+pct(a.taxa):''), tipo:'Entrada', claude:a.origem==='claude', v:liq(a), del:'atendimentos:'+a.id})),
+    ...x.de.map(e=>({hora:'', desc:e.desc+(e.mensal?' · todo mês':''), sub:[catDe(e), e.pago?'pago':'a pagar'].join(' · '), tipo:e.tipo, claude:e.origem==='claude', v:-e.valor, del:'despesas:'+e.id}))]
+    .sort((a,b)=>(a.hora||'99').localeCompare(b.hora||'99'));
+  return `<div class="cx-topo"><h2>Fluxo de caixa · dia</h2>${segCaixa()}</div><p class="lead">Tudo o que entrou e saiu no dia escolhido.</p>
+  <div class="daynav"><button class="btn sm ghost" data-cxnav="-1" aria-label="Dia anterior">‹</button><b>${diaSem(d)}, ${fmtD(d)}${d===TODAY?' · hoje':''}</b><button class="btn sm ghost" data-cxnav="1" aria-label="Próximo dia">›</button></div>
+  ${d!==TODAY?'<button class="btn sm ghost" data-cxhoje="1" style="margin-bottom:12px">Hoje</button>':''}
+  <div class="kpis">
+    <div class="kpi"><span>Entradas brutas</span><b>${brl(x.bruto)}</b></div>
+    <div class="kpi"><span>Taxas da maquineta</span><b class="neg">− ${brl(x.taxas)}</b></div>
+    <div class="kpi"><span>Entradas líquidas</span><b class="pos">${brl(x.liquido)}</b></div>
+    <div class="kpi"><span>Saídas</span><b class="neg">− ${brl(x.saida)}</b><small class="dl muted">fixas ${brl(x.fixa)} · variáveis ${brl(x.vari)}</small></div>
+    <div class="kpi main"><span>Saldo do dia</span><b>${brl(x.saldo)}</b></div>
+  </div>
+  <div class="card"><h3>Movimentações do dia · ${mov.length}</h3>${mov.length?`<div class="tbl-wrap"><table class="resp"><thead><tr><th>Hora</th><th>Descrição</th><th>Tipo</th><th class="r">Valor</th><th></th></tr></thead><tbody>
+    ${mov.map(m=>`<tr><td class="num" data-label="Hora">${m.hora||'—'}</td><td class="full"><b>${esc(m.desc)}</b><br><small class="muted">${esc(m.sub)}</small></td><td data-label="Tipo">${m.claude?'<span class="chip c-claude">via Claude</span> ':''}<span class="chip ${m.tipo==='Entrada'?'c-ok':m.tipo==='Fixa'?'c-neu':'c-warn'}">${m.tipo}</span></td><td class="r num ${m.v<0?'neg':''}" data-label="Valor">${brl(m.v)}</td><td class="acao"><button class="x" data-del="${m.del}" aria-label="Excluir lançamento" title="Excluir">✕</button></td></tr>`).join('')}
+  </tbody></table></div>`:'<p class="empty">Nenhuma movimentação neste dia.</p>'}
+    <p class="note">Entradas aparecem já sem a taxa da maquineta. Despesas que se repetem todo mês entram no dia do vencimento.</p></div>`;
+}
+
+function caixaVerMes(){
+  const r = resumo(), dias = diasDoMes(MES), comMov = dias.filter(x=>x.mov);
   const mov = [...r.at.map(a=>({data:a.data,desc:a.paciente+' · '+a.proc,tipo:'Entrada',claude:a.origem==='claude',v:liq(a),del:'atendimentos:'+a.id})), ...r.de.map(d=>({data:d.data,desc:d.desc+(d.mensal?' · todo mês':''),claude:d.origem==='claude',tipo:d.tipo,v:-d.valor,del:'despesas:'+d.id}))].sort((a,b)=>b.data.localeCompare(a.data));
-  return `<h2>Fluxo de caixa · ${mesNome()}</h2><p class="lead">As entradas vêm sozinhas dos atendimentos, já sem a taxa. Aqui você lança só as saídas.</p>
+  return `<div class="cx-topo"><h2>Fluxo de caixa · ${mesNome()}</h2>${segCaixa()}</div><p class="lead">As entradas vêm sozinhas dos atendimentos, já sem a taxa. Aqui você lança só as saídas.</p>
   <div class="kpis">
     <div class="kpi"><span>Entradas líquidas</span><b class="pos">${brl(r.liquido)}</b></div>
     <div class="kpi"><span>Despesas fixas</span><b class="neg">− ${brl(r.fixa)}</b></div>
     <div class="kpi"><span>Despesas variáveis</span><b class="neg">− ${brl(r.vari)}</b></div>
     <div class="kpi main"><span>Saldo</span><b>${brl(r.saldo)}</b></div>
   </div>
+  <div class="card" style="margin-bottom:16px"><h3>Saldo de cada dia</h3>
+    <div class="legend"><span><i style="background:var(--ok)"></i>Positivo</span><span><i style="background:var(--bad)"></i>Negativo</span><span class="muted">Toque numa barra para abrir o dia</span></div>
+    <p class="dica-arrastar">Arraste o gráfico para o lado para ver o mês inteiro.</p>
+    <div class="tbl-wrap">${chartSaldo(dias)}</div></div>
+  <div class="card" style="margin-bottom:16px"><h3>Dia a dia · ${comMov.length} ${comMov.length===1?'dia':'dias'} com movimento</h3>${comMov.length?`<div class="tbl-wrap"><table class="resp cx-dias"><thead><tr><th>Data</th><th class="r">Entradas líquidas</th><th class="r">Saídas</th><th class="r">Saldo do dia</th><th class="r">Acumulado</th></tr></thead><tbody>
+    ${comMov.map(x=>`<tr data-cxdia="${x.d}" tabindex="0" title="Abrir este dia"><td class="full"><b>${fmtD(x.d).slice(0,5)}</b> <small class="muted">${diaSem(x.d)}</small></td><td class="r num pos" data-label="Entradas líquidas">${brl(x.liquido)}</td><td class="r num ${x.saida?'neg':''}" data-label="Saídas">${x.saida?'− '+brl(x.saida):brl(0)}</td><td class="r num ${x.saldo<0?'neg':''}" data-label="Saldo do dia"><b>${brl(x.saldo)}</b></td><td class="r num ${x.acum<0?'neg':''}" data-label="Acumulado">${brl(x.acum)}</td></tr>`).join('')}
+  </tbody></table></div>`:'<p class="empty">Nenhum dia com movimento neste mês.</p>'}
+    <p class="note">Toque num dia para ver as movimentações dele.</p></div>
   <div class="grid split">
     <div class="card"><h3>Movimentações</h3>${mov.length?`<div class="tbl-wrap"><table class="resp"><thead><tr><th>Data</th><th>Descrição</th><th>Tipo</th><th class="r">Valor</th><th></th></tr></thead><tbody>
       ${mov.map(m=>`<tr><td class="num" data-label="Data">${fmtD(m.data).slice(0,5)}</td><td class="full"><b>${esc(m.desc)}</b></td><td data-label="Tipo">${m.claude?'<span class="chip c-claude">via Claude</span> ':''}<span class="chip ${m.tipo==='Entrada'?'c-ok':m.tipo==='Fixa'?'c-neu':'c-warn'}">${m.tipo}</span></td><td class="r num ${m.v<0?'neg':''}" data-label="Valor">${brl(m.v)}</td><td class="acao"><button class="x" data-del="${m.del}" aria-label="Excluir lançamento" title="Excluir">✕</button></td></tr>`).join('')}
@@ -585,7 +654,7 @@ V.caixa = () => {
       <p class="note"><b>Fixa:</b> todo mês igual (aluguel, salário). <b>Variável:</b> muda conforme o movimento (material, laboratório).</p>
     </form>
   </div>`;
-};
+}
 
 const ESTCAT = ['Materiais','Descartáveis','Medicamentos','Esterilização','Outros'];
 const ESTUN = ['unidade','caixa','pacote','tubo','frasco','seringa'];
@@ -840,7 +909,7 @@ document.addEventListener('click', e => {
   if(esc_){ const campo = document.getElementById(esc_.dataset.campo); campo.value = esc_.dataset.escolher; esc_.parentElement.hidden = true;
     const alvo = campo.dataset.sug && document.getElementById(campo.dataset.sug); if(alvo && esc_.dataset.fone) alvo.value = esc_.dataset.fone; return; }
   if(!e.target.closest('.sug')) document.querySelectorAll('.sug-lista').forEach(l=>l.hidden = true);
-  const t = e.target.closest('[data-tab],[data-go],[data-day],[data-hoje],[data-atender],[data-sel],[data-sent],[data-st],[data-del],[data-delproc],[data-usar],[data-comprar],[data-abrirpac],[data-ficha],[data-voltarpac],[data-imprimir],[data-editpac],[data-plano],[data-delplano],[data-dmes],[data-dfiltro],[data-pagar],[data-delcolab],#addProc,#backup,#sair,#sair2,#sair3,#esqueci,#trocarSenha');
+  const t = e.target.closest('[data-tab],[data-go],[data-day],[data-hoje],[data-atender],[data-sel],[data-sent],[data-st],[data-del],[data-delproc],[data-usar],[data-comprar],[data-abrirpac],[data-ficha],[data-voltarpac],[data-imprimir],[data-editpac],[data-plano],[data-delplano],[data-dmes],[data-dfiltro],[data-pagar],[data-delcolab],[data-cxvis],[data-cxdia],[data-cxnav],[data-cxhoje],#addProc,#backup,#sair,#sair2,#sair3,#esqueci,#trocarSenha');
   if(!t) return;
   if(['sair','sair2','sair3'].includes(t.id)) return signOut(auth);
   if(t.id==='esqueci'){
@@ -859,6 +928,10 @@ document.addEventListener('click', e => {
   if('editpac' in t.dataset){ pacEdit = t.dataset.editpac || null; return render(); }
   if(t.dataset.plano){ const p = S.pac.find(x=>x.id===pacSel); if(!p) return;
     put('pacientes', {...p, plano:p.plano.map(it=>it.id===t.dataset.plano?{...it, feito:!it.feito, feitoEm:!it.feito?TODAY:''}:it)}); return render(); }
+  if(t.dataset.cxvis){ caixaVis = t.dataset.cxvis; if(caixaVis==='dia' && !caixaDia) caixaDia = TODAY; return render(); }
+  if(t.dataset.cxdia){ caixaVis = 'dia'; caixaDia = t.dataset.cxdia; render(); return window.scrollTo({top:0}); }
+  if(t.dataset.cxnav){ caixaDia = addDays(caixaDia || TODAY, +t.dataset.cxnav); return render(); }
+  if(t.dataset.cxhoje){ caixaDia = TODAY; return render(); }
   if(t.dataset.dmes){ despMes = addMes(despMes || MES, +t.dataset.dmes); return render(); }
   if('dfiltro' in t.dataset){ despFiltro = t.dataset.dfiltro; return render(); }
   if(t.dataset.pagar){ const [id, mes] = t.dataset.pagar.split('|'); const d = S.desp.find(x=>x.id===id); if(!d) return;
@@ -908,6 +981,7 @@ document.addEventListener('click', e => {
   }
   if(t.id==='addProc'){ S.procs = [...S.procs, {id:novoId(),nome:'Novo procedimento',valor:0}]; saveConfig(); render(); const el=[...document.querySelectorAll('[id^=prNome_]')].pop(); el.focus(); el.select(); return; }
 });
+document.addEventListener('keydown', e => { if(e.key==='Enter' && e.target.matches && e.target.matches('tr[data-cxdia]')) e.target.click(); });
 document.addEventListener('input', e => {
   // Sugestões de pacientes enquanto digita (sem acento e sem diferença de maiúsculas, qualquer parte do nome)
   if('sug' in e.target.dataset){

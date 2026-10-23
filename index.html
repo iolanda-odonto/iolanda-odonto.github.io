@@ -144,6 +144,9 @@ label.chk input{width:auto;accent-color:var(--plum)}
 .login form{display:flex;flex-direction:column;gap:12px;text-align:left}
 .carregando{min-height:60vh;display:grid;place-items:center;color:var(--muted)}
 @media (prefers-reduced-motion:no-preference){.bar i{transition:width .4s ease}}
+.aviso-ag{border-color:var(--wa);background:var(--ok-soft)}
+.slot.slot-ag{grid-template-columns:58px minmax(0,1fr)}
+.slot.slot-ag .act{grid-column:2;justify-content:flex-start}
 .cx-topo{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:4px}
 .cx-topo h2{margin:0}
 .seg{display:inline-flex;border:1px solid var(--line);border-radius:10px;overflow:hidden;background:var(--surface)}
@@ -262,9 +265,9 @@ let db;
 try { db = initializeFirestore(fb, {localCache: persistentLocalCache({tabManager: persistentMultipleTabManager()})}); }
 catch(e){ db = initializeFirestore(fb, {}); }
 
-const VERSAO = '21/10/2026 · 6'; // aumentar a cada envio ao GitHub, para conferir se o celular pegou a atualização
+const VERSAO = '23/10/2026 · 7'; // aumentar a cada envio ao GitHub, para conferir se o celular pegou a atualização
 const FORMAS = ['Pix','Dinheiro','Débito','Crédito à vista','Crédito parcelado'];
-const TABS = [['inicio','Início'],['dash','Dashboard'],['agenda','Agenda'],['pacientes','Pacientes'],['confirm','Confirmações'],['atend','Atendimentos'],['caixa','Fluxo de caixa'],['despesas','Despesas'],['estoque','Estoque'],['rel','Relatórios'],['config','Configurações']];
+const TABS = [['inicio','Início'],['dash','Dashboard'],['agenda','Agenda'],['pacientes','Pacientes'],['confirm','Confirmações'],['aniver','Aniversários'],['atend','Atendimentos'],['caixa','Fluxo de caixa'],['despesas','Despesas'],['estoque','Estoque'],['rel','Relatórios'],['config','Configurações']];
 const brl = v => (v||0).toLocaleString('pt-BR',{style:'currency',currency:'BRL'});
 const pct = v => (v||0).toLocaleString('pt-BR',{maximumFractionDigits:2})+'%';
 const iso = d => d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
@@ -353,8 +356,16 @@ const pacientes = () => {
   return [...m.values()].sort((a,b)=>a.nome.localeCompare(b.nome,'pt-BR'));
 };
 
+// Aniversários: dia e mês do nascimento; quem nasceu em 29/02 aparece em 28/02 nos anos que não são bissextos.
+let ultimoAg = null;
+const mdDe = s => { const md = s.slice(5); return md==='02-29' && ultimoDia(s.slice(0,4)+'-02')===28 ? '02-28' : md; };
+const faz = (p, dataRef) => dataOk(p.nasc) && mdDe(dataRef.slice(0,4)+'-'+p.nasc.slice(5))===dataRef.slice(5);
+const aniverHoje = () => S.pac.filter(p=>faz(p, TODAY));
+const aniverPendentes = () => aniverHoje().filter(p=>p.fone && p.parabensEnviado!==TODAY.slice(0,4)).length;
+function msgAniver(p){ return `Olá, ${primeiroNome(p.nome)}! 🎉\n\nA equipe da Dra. Iolanda Alves Odontologia deseja a você um feliz aniversário! Que o seu dia seja cheio de alegria e muitos sorrisos. 😁🦷\n\nUm grande abraço!`; }
+
 function renderTabs(){
-  document.getElementById('tabs').innerHTML = TABS.map(([k,l])=>{ const n = k==='confirm'?pendAmanha():k==='estoque'?estAlert():0;
+  document.getElementById('tabs').innerHTML = TABS.map(([k,l])=>{ const n = k==='confirm'?pendAmanha():k==='estoque'?estAlert():k==='aniver'?aniverPendentes():0;
     return `<button role="tab" aria-selected="${k===tab}" data-tab="${k}">${l}${n?`<span class="badge">${n}</span>`:''}</button>`; }).join('');
 }
 function go(t){ tab = t; render(); window.scrollTo({top:0}); }
@@ -381,6 +392,7 @@ V.inicio = () => {
     <div class="card"><h3>Agenda de hoje · ${hoje.length} ${hoje.length===1?'paciente':'pacientes'}</h3>${hoje.length?hoje.map(a=>`<div class="slot"><span class="h">${a.hora}</span><div class="who"><b>${esc(a.paciente)}</b><small>${esc(a.proc)} · ${esc(profCurto(a.prof))}</small></div><div class="act">${viaClaude(a)}${chip(stAg(a))}</div></div>`).join(''):'<p class="empty">Nenhum paciente hoje.</p>'}</div>
     <div class="card"><h3>Faturamento por profissional</h3>${bars(porProf)}
       <div class="mt" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap"><span class="chip c-warn">${pendAmanha()} confirmações pendentes para amanhã</span><button class="btn sm ghost" data-go="confirm">Abrir confirmações</button></div>
+      ${aniverHoje().length?`<div class="mt" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap"><span class="chip c-neu">🎂 ${aniverHoje().length} ${aniverHoje().length>1?'aniversariantes':'aniversariante'} hoje</span><button class="btn sm ghost" data-go="aniver">Ver aniversários</button></div>`:''}
       ${estAlert()?`<div class="mt" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap"><span class="chip c-bad">${estAlert()} ${estAlert()>1?'itens':'item'} do estoque para repor ou vencendo</span><button class="btn sm ghost" data-go="estoque">Ver estoque</button></div>`:''}</div>
   </div>`;
 };
@@ -440,12 +452,16 @@ V.dash = () => {
 V.agenda = () => {
   const lista = S.agenda.filter(a=>a.data===agDay).sort((a,b)=>a.hora.localeCompare(b.hora));
   const opt = (arr,sel) => arr.map(o=>`<option value="${esc(o[0])}" ${o[0]===sel?'selected':''}>${esc(o[1])}</option>`).join('');
-  return `<h2>Agenda</h2><p class="lead">Ao agendar, cadastre o WhatsApp do paciente. É ele que permite enviar a confirmação no dia anterior. Para quem já veio, o número aparece sozinho.</p>
+  const novo = ultimoAg && S.agenda.find(x=>x.id===ultimoAg);
+  const aviso = novo ? `<div class="card aviso-ag" style="margin-bottom:16px"><b>✓ Agendado: ${esc(novo.paciente)}</b>, ${diaSem(novo.data)}, ${fmtD(novo.data)} às ${novo.hora}.
+    ${novo.fone ? `<div class="mt" style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn wa" type="button" data-avisar="${novo.id}">Enviar mensagem de agendamento</button><button class="btn ghost" type="button" data-fecharaviso="1">Agora não</button></div>` : `<p class="note" style="margin:6px 0 0">Sem WhatsApp cadastrado: não dá para avisar o paciente. <button class="btn sm ghost" type="button" data-fecharaviso="1">Ok</button></p>`}</div>` : '';
+  return `<h2>Agenda</h2><p class="lead">Ao agendar, cadastre o WhatsApp do paciente. Logo depois aparece o botão para avisar o paciente, e na véspera o lembrete fica na aba Confirmações.</p>
+  ${aviso}
   <div class="grid split">
     <div class="card">
       <div class="daynav"><button class="btn sm ghost" data-day="-1" aria-label="Dia anterior">‹</button><b>${diaSem(agDay)}, ${fmtD(agDay)}${agDay===TODAY?' · hoje':''}</b><button class="btn sm ghost" data-day="1" aria-label="Próximo dia">›</button></div>
       ${agDay!==TODAY?'<button class="btn sm ghost" data-hoje="1" style="margin-bottom:8px">Voltar para hoje</button>':''}
-      ${lista.length?lista.map(a=>`<div class="slot"><span class="h">${a.hora}</span><div class="who"><b>${esc(a.paciente)}</b><small>${esc(a.proc)} · ${esc(profCurto(a.prof))}${a.fone?' · '+esc(a.fone):''}</small></div><div class="act">${viaClaude(a)}${chip(stAg(a))}<button class="btn sm ghost" data-ficha="${esc(a.paciente)}" data-fone="${esc(a.fone)}">Ficha</button><button class="btn sm ghost" data-atender="${a.id}">Registrar atendimento</button><button class="btn sm danger" data-del="agenda:${a.id}">Excluir</button></div></div>`).join(''):'<p class="empty">Nenhum horário marcado neste dia. Use o formulário ao lado para agendar.</p>'}
+      ${lista.length?lista.map(a=>`<div class="slot slot-ag"><span class="h">${a.hora}</span><div class="who"><b>${esc(a.paciente)}</b><small>${esc(a.proc)} · ${esc(profCurto(a.prof))}${a.fone?' · '+esc(a.fone):''}</small></div><div class="act">${viaClaude(a)}${chip(stAg(a))}${a.avisoMarcacao?'<span class="chip c-ok" title="Mensagem de agendamento enviada">avisado</span>':a.fone && a.data>=TODAY?`<button class="btn sm wa" data-avisar="${a.id}" title="Enviar mensagem de agendamento">Avisar</button>`:''}<button class="btn sm ghost" data-ficha="${esc(a.paciente)}" data-fone="${esc(a.fone)}">Ficha</button><button class="btn sm ghost" data-atender="${a.id}">Registrar atendimento</button><button class="btn sm danger" data-del="agenda:${a.id}">Excluir</button></div></div>`).join(''):'<p class="empty">Nenhum horário marcado neste dia. Use o formulário ao lado para agendar.</p>'}
     </div>
     <form class="card" id="fAg" style="align-self:start"><h3>Novo agendamento</h3>
       <div class="row"><label class="sug">Paciente<input id="agPac" required autocomplete="off" placeholder="Digite o nome" data-sug="agFone"><div class="sug-lista" id="sug-agPac" hidden></div></label></div>
@@ -459,9 +475,14 @@ V.agenda = () => {
 };
 
 const foneWa = f => { const d = String(f||'').replace(/\D/g,''); return d.length<=11 ? '55'+d : d; };
+const primeiroNome = n => { const p = String(n||'').trim().split(/\s+/)[0] || ''; return p.charAt(0).toUpperCase() + p.slice(1).toLowerCase(); };
+const abrirWa = (fone, texto) => window.open(`https://wa.me/${foneWa(fone)}?text=${encodeURIComponent(texto)}`, '_blank', 'noopener');
+function msgMarcacao(a){
+  return `Olá, ${primeiroNome(a.paciente)}! Aqui é do consultório Dra. Iolanda Alves Odontologia. 😊\n\nSua consulta foi agendada para ${diaSem(a.data)}, ${fmtD(a.data)}, às ${a.hora}, com ${profCurto(a.prof)} (${a.proc}).\n\nNa véspera enviaremos um lembrete para você confirmar. Qualquer dúvida, é só responder esta mensagem. Até lá!`;
+}
 function msgConf(a){
   const link = a.conf ? CONF_URL+'?id='+a.conf : '(o link é criado quando você tocar em Enviar)';
-  return `Olá, ${a.paciente.split(' ')[0]}! Aqui é do consultório Dra. Iolanda Alves Odontologia.\n\nSua consulta está marcada para ${diaSem(a.data)}, ${fmtD(a.data)}, às ${a.hora}, com ${profCurto(a.prof)} (${a.proc}).\n\nToque no link para confirmar ou pedir remarcação:\n${link}`;
+  return `Olá, ${primeiroNome(a.paciente)}! Aqui é do consultório Dra. Iolanda Alves Odontologia.\n\nSua consulta está marcada para ${diaSem(a.data)}, ${fmtD(a.data)}, às ${a.hora}, com ${profCurto(a.prof)} (${a.proc}).\n\nToque no link para confirmar ou pedir remarcação:\n${link}`;
 }
 V.confirm = () => {
   const amanha = addDays(TODAY,1);
@@ -483,6 +504,20 @@ V.confirm = () => {
     </div>
     <div>${phone}</div>
   </div>`;
+};
+
+V.aniver = () => {
+  const comData = S.pac.filter(p=>dataOk(p.nasc)), semData = S.pac.length - comData.length;
+  const hoje = aniverHoje().sort((a,b)=>a.nome.localeCompare(b.nome,'pt-BR'));
+  const prox = [...Array(30)].map((_,i)=>addDays(TODAY,i+1)).flatMap(d=>comData.filter(p=>faz(p,d)).map(p=>({p,d})));
+  const linha = (p, d) => { const anos = +d.slice(0,4) - +p.nasc.slice(0,4), enviado = p.parabensEnviado===d.slice(0,4);
+    return `<div class="slot"><span class="h">${fmtD(d).slice(0,5)}</span><div class="who"><b>${esc(p.nome)}</b><small>${anos} anos${p.fone?' · '+esc(fmtFone(p.fone)):' · sem WhatsApp'}</small></div><div class="act">${d===TODAY ? (enviado?'<span class="chip c-ok">parabéns enviado</span>':p.fone?`<button class="btn sm wa" data-parabens="${p.id}">Enviar parabéns</button>`:'') : `<span class="chip c-neu">${diaSem(d)}</span>`}<button class="btn sm ghost" data-abrirpac="${p.id}">Ficha</button></div></div>`; };
+  return `<h2>Aniversários</h2><p class="lead">Pacientes que fazem aniversário hoje e nos próximos 30 dias. O botão abre o WhatsApp com a mensagem de parabéns pronta.</p>
+  <div class="grid g2">
+    <div class="card"><h3>🎂 Hoje · ${diaSem(TODAY)}, ${fmtD(TODAY)}</h3>${hoje.length ? hoje.map(p=>linha(p, TODAY)).join('') : '<p class="empty">Ninguém faz aniversário hoje.</p>'}</div>
+    <div class="card"><h3>Próximos 30 dias · ${prox.length}</h3>${prox.length ? prox.map(x=>linha(x.p, x.d)).join('') : '<p class="empty">Nenhum aniversário nos próximos 30 dias.</p>'}</div>
+  </div>
+  ${semData?`<p class="note">${semData} ${semData>1?'fichas ainda não têm':'ficha ainda não tem'} data de nascimento. Para aparecerem aqui, preencha em Pacientes › Ficha › Editar dados, ou me passe as datas que eu cadastro.</p>`:''}`;
 };
 
 V.atend = () => {
@@ -909,7 +944,7 @@ document.addEventListener('click', e => {
   if(esc_){ const campo = document.getElementById(esc_.dataset.campo); campo.value = esc_.dataset.escolher; esc_.parentElement.hidden = true;
     const alvo = campo.dataset.sug && document.getElementById(campo.dataset.sug); if(alvo && esc_.dataset.fone) alvo.value = esc_.dataset.fone; return; }
   if(!e.target.closest('.sug')) document.querySelectorAll('.sug-lista').forEach(l=>l.hidden = true);
-  const t = e.target.closest('[data-tab],[data-go],[data-day],[data-hoje],[data-atender],[data-sel],[data-sent],[data-st],[data-del],[data-delproc],[data-usar],[data-comprar],[data-abrirpac],[data-ficha],[data-voltarpac],[data-imprimir],[data-editpac],[data-plano],[data-delplano],[data-dmes],[data-dfiltro],[data-pagar],[data-delcolab],[data-cxvis],[data-cxdia],[data-cxnav],[data-cxhoje],#addProc,#backup,#sair,#sair2,#sair3,#esqueci,#trocarSenha');
+  const t = e.target.closest('[data-tab],[data-go],[data-day],[data-hoje],[data-atender],[data-sel],[data-sent],[data-st],[data-del],[data-delproc],[data-usar],[data-comprar],[data-abrirpac],[data-ficha],[data-voltarpac],[data-imprimir],[data-editpac],[data-plano],[data-delplano],[data-dmes],[data-dfiltro],[data-pagar],[data-delcolab],[data-cxvis],[data-cxdia],[data-cxnav],[data-cxhoje],[data-avisar],[data-fecharaviso],[data-parabens],#addProc,#backup,#sair,#sair2,#sair3,#esqueci,#trocarSenha');
   if(!t) return;
   if(['sair','sair2','sair3'].includes(t.id)) return signOut(auth);
   if(t.id==='esqueci'){
@@ -953,11 +988,20 @@ document.addEventListener('click', e => {
     if(!a.fone) return toast('Cadastre o WhatsApp do paciente na Agenda');
     const novo = {...a}; if(!novo.conf) novo.conf = novoId();
     if(novo.status==='pendente') novo.status = 'enviado';
-    setDoc(doc(db,'confirmacoes',novo.conf), {nome:a.paciente.split(' ')[0], data:a.data, hora:a.hora, prof:profCurto(a.prof), proc:a.proc, agendaId:a.id}, {merge:true}).catch(erro);
+    setDoc(doc(db,'confirmacoes',novo.conf), {nome:primeiroNome(a.paciente), data:a.data, hora:a.hora, prof:profCurto(a.prof), proc:a.proc, agendaId:a.id}, {merge:true}).catch(erro);
     put('agenda', novo);
-    window.open(`https://wa.me/${foneWa(a.fone)}?text=${encodeURIComponent(msgConf(novo))}`, '_blank', 'noopener');
-    selConf = a.id; render(); toast('WhatsApp aberto com a mensagem pronta'); return;
+    abrirWa(a.fone, msgConf(novo));
+    // Já deixa selecionado o próximo paciente de amanhã que ainda não recebeu o lembrete
+    const prox = S.agenda.filter(x=>x.data===a.data && x.fone && stAg(x)==='pendente' && x.id!==a.id).sort((x,y)=>x.hora.localeCompare(y.hora))[0];
+    selConf = prox ? prox.id : a.id; render(); toast(prox ? `Enviado. Próximo: ${primeiroNome(prox.paciente)}` : 'WhatsApp aberto. Todos os lembretes de amanhã foram enviados.'); return;
   }
+  if(t.dataset.avisar){ const a = S.agenda.find(x=>x.id===t.dataset.avisar); if(!a) return;
+    if(!a.fone) return toast('Cadastre o WhatsApp do paciente');
+    abrirWa(a.fone, msgMarcacao(a)); put('agenda', {...a, avisoMarcacao:TODAY}); ultimoAg = null; render(); return toast('WhatsApp aberto com a mensagem de agendamento'); }
+  if(t.dataset.fecharaviso){ ultimoAg = null; return render(); }
+  if(t.dataset.parabens){ const p = S.pac.find(x=>x.id===t.dataset.parabens); if(!p) return;
+    if(!p.fone) return toast('Esta ficha não tem WhatsApp');
+    abrirWa(p.fone, msgAniver(p)); put('pacientes', {...p, parabensEnviado:TODAY.slice(0,4)}); render(); return toast('WhatsApp aberto com a mensagem de parabéns'); }
   if(t.dataset.st){ const [id,st] = t.dataset.st.split(':'); const a = S.agenda.find(x=>x.id===id); if(!a) return;
     put('agenda', {...a, status:st, manual:true}); render(); return toast(st==='confirmado'?'Marcado como confirmado':'Marcado: pediu para remarcar'); }
   if(t.dataset.del){
@@ -1025,8 +1069,8 @@ document.addEventListener('submit', e => {
   if(id==='fEvo'){ const p = S.pac.find(x=>x.id===pacSel); if(!p) return;
     if(!$('evProc').trim() && !$('evObs').trim()) return toast('Escreva o procedimento ou o que foi feito');
     put('evolucoes', {id:novoId(), pacienteId:p.id, paciente:p.nome, data:$('evData'), prof:$('evProf'), dentes:$('evDentes').trim(), proc:$('evProc').trim(), obs:$('evObs').trim()}); render(); return toast('Evolução salva'); }
-  if(id==='fAg'){ put('agenda', {id:novoId(),pacienteId:garantirPac($('agPac'), $('agFone').replace(/\D/g,'')),data:$('agData'),hora:$('agHora'),paciente:$('agPac').trim(),fone:$('agFone').replace(/\D/g,''),prof:$('agProf'),proc:$('agProc'),status:'pendente'});
-    agDay = $('agData'); render(); toast('Agendamento salvo'); }
+  if(id==='fAg'){ const nid = novoId(); put('agenda', {id:nid,pacienteId:garantirPac($('agPac'), $('agFone').replace(/\D/g,'')),data:$('agData'),hora:$('agHora'),paciente:$('agPac').trim(),fone:$('agFone').replace(/\D/g,''),prof:$('agProf'),proc:$('agProc'),status:'pendente'});
+    agDay = $('agData'); ultimoAg = nid; render(); window.scrollTo({top:0}); toast('Agendamento salvo'); }
   if(id==='fAt'){ const f=$('atForma'), p=f==='Crédito parcelado'?+$('atParc'):1;
     const conhecido = pacientes().find(x=>normN(x.nome)===normN($('atPac'))), pid = garantirPac($('atPac'), conhecido ? conhecido.fone : '');
     put('atendimentos', {id:novoId(),pacienteId:pid,data:$('atData'),paciente:$('atPac').trim(),prof:$('atProf'),tipo:$('atTipo'),proc:$('atProc'),valor:parseFloat($('atValor'))||0,forma:f,parc:p,taxa:taxaDe(f,p)});

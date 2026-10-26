@@ -46,8 +46,8 @@ header.top img{width:96px;height:96px;border-radius:50%;border:2px solid var(--p
 .brand small{display:block;font-size:.72rem;letter-spacing:.28em;text-transform:uppercase;color:var(--muted)}
 .conta{margin-left:auto;display:flex;align-items:center;gap:8px;font-size:.8rem;color:var(--muted);flex-wrap:wrap;justify-content:flex-end;min-width:0}
 .conta span{overflow-wrap:anywhere}
-nav.tabs{display:flex;gap:4px;overflow-x:auto;border-bottom:1px solid var(--line);margin-block:6px 22px;scrollbar-width:none}
-nav.tabs button{background:none;border:0;border-bottom:2px solid transparent;padding:10px 12px;font:inherit;font-weight:600;color:var(--muted);cursor:pointer;white-space:nowrap}
+nav.tabs{display:flex;flex-wrap:wrap;gap:2px 4px;border-bottom:1px solid var(--line);margin-block:6px 22px}
+nav.tabs button{background:none;border:0;border-bottom:2px solid transparent;padding:10px 10px;font:inherit;font-weight:600;color:var(--muted);cursor:pointer;white-space:nowrap}
 nav.tabs button[aria-selected="true"]{color:var(--plum);border-bottom-color:var(--plum)}
 nav.tabs .badge{display:inline-block;min-width:20px;margin-left:4px;padding:0 6px;border-radius:99px;background:var(--plum);color:var(--plum-ink);font-size:.72rem}
 h2{font-family:var(--f-display);font-weight:600;font-size:1.9rem;margin:0 0 4px;text-wrap:balance}
@@ -265,7 +265,7 @@ let db;
 try { db = initializeFirestore(fb, {localCache: persistentLocalCache({tabManager: persistentMultipleTabManager()})}); }
 catch(e){ db = initializeFirestore(fb, {}); }
 
-const VERSAO = '26/10/2026 · 8'; // aumentar a cada envio ao GitHub, para conferir se o celular pegou a atualização
+const VERSAO = '26/10/2026 · 9'; // aumentar a cada envio ao GitHub, para conferir se o celular pegou a atualização
 const FORMAS = ['Pix','Dinheiro','Débito','Crédito à vista','Crédito parcelado'];
 const TABS = [['inicio','Início'],['dash','Dashboard'],['agenda','Agenda'],['pacientes','Pacientes'],['confirm','Confirmações'],['aniver','Aniversários'],['atend','Atendimentos'],['caixa','Fluxo de caixa'],['despesas','Despesas'],['contas','Contas a pagar'],['estoque','Estoque'],['rel','Relatórios'],['config','Configurações']];
 const brl = v => (v||0).toLocaleString('pt-BR',{style:'currency',currency:'BRL'});

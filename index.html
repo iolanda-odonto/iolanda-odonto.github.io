@@ -265,9 +265,9 @@ let db;
 try { db = initializeFirestore(fb, {localCache: persistentLocalCache({tabManager: persistentMultipleTabManager()})}); }
 catch(e){ db = initializeFirestore(fb, {}); }
 
-const VERSAO = '23/10/2026 · 7'; // aumentar a cada envio ao GitHub, para conferir se o celular pegou a atualização
+const VERSAO = '26/10/2026 · 8'; // aumentar a cada envio ao GitHub, para conferir se o celular pegou a atualização
 const FORMAS = ['Pix','Dinheiro','Débito','Crédito à vista','Crédito parcelado'];
-const TABS = [['inicio','Início'],['dash','Dashboard'],['agenda','Agenda'],['pacientes','Pacientes'],['confirm','Confirmações'],['aniver','Aniversários'],['atend','Atendimentos'],['caixa','Fluxo de caixa'],['despesas','Despesas'],['estoque','Estoque'],['rel','Relatórios'],['config','Configurações']];
+const TABS = [['inicio','Início'],['dash','Dashboard'],['agenda','Agenda'],['pacientes','Pacientes'],['confirm','Confirmações'],['aniver','Aniversários'],['atend','Atendimentos'],['caixa','Fluxo de caixa'],['despesas','Despesas'],['contas','Contas a pagar'],['estoque','Estoque'],['rel','Relatórios'],['config','Configurações']];
 const brl = v => (v||0).toLocaleString('pt-BR',{style:'currency',currency:'BRL'});
 const pct = v => (v||0).toLocaleString('pt-BR',{maximumFractionDigits:2})+'%';
 const iso = d => d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
@@ -284,7 +284,7 @@ tick();
 const mesAnterior = () => { const d = new Date(TODAY+'T12:00'); d.setDate(1); d.setMonth(d.getMonth()-1); return iso(d).slice(0,7); };
 
 // Dados: tudo fica no Firestore. Cada coleção abaixo vira uma lista em S, atualizada ao vivo.
-const COLS = {agenda:'agenda', atendimentos:'atend', despesas:'desp', estoque:'estoque', estoqueMov:'movEst', confirmacoes:'conf', pacientes:'pac', evolucoes:'evo'};
+const COLS = {agenda:'agenda', atendimentos:'atend', despesas:'desp', estoque:'estoque', estoqueMov:'movEst', confirmacoes:'conf', pacientes:'pac', evolucoes:'evo', contas:'contas'};
 const NCARGA = Object.keys(COLS).length + 1; // coleções + config/geral
 const TAXAS_EXEMPLO = {debito:1.99, credito1:3.49, cred2a6:5.49, cred7a12:7.99};
 const DEF = {
@@ -292,9 +292,9 @@ const DEF = {
   procs: [['Avaliação',100],['Limpeza (profilaxia)',180],['Restauração em resina',250],['Extração simples',300],['Aplicação de flúor',80],['Clareamento',900],['Tratamento de canal',1200],['Manutenção ortodôntica',150]].map(([nome,valor],i)=>({id:'pr'+(i+1),nome,valor})),
   taxas: TAXAS_EXEMPLO
 };
-const vazio = () => ({profs:DEF.profs, procs:DEF.procs, taxas:{...DEF.taxas}, colabs:[], agenda:[], atend:[], desp:[], estoque:[], movEst:[], conf:[], pac:[], evo:[]});
+const vazio = () => ({profs:DEF.profs, procs:DEF.procs, taxas:{...DEF.taxas}, colabs:[], agenda:[], atend:[], desp:[], estoque:[], movEst:[], conf:[], pac:[], evo:[], contas:[]});
 let S = vazio(), user = null, unsubs = [], carregados = new Set(), cfgCriada = false;
-let despMes = null, despFiltro = '';
+let despMes = null, despFiltro = '', contasMes = null, contasLocal = '', contaPagar = null;
 let tab = 'inicio', agDay = TODAY, selConf = null, prefill = null, estSel = null, estTipo = 'Saída', pacSel = null, pacEdit = null;
 
 const num = v => +v || 0;
@@ -308,7 +308,8 @@ const NORM = {
   estoqueMov: m => dataOk(m.data) && m.nome ? {...m, qtd:num(m.qtd)} : null,
   confirmacoes: c => c,
   pacientes: p => p.nome ? {...p, fone:p.fone||'', anamnese:p.anamnese||{}, plano:Array.isArray(p.plano)?p.plano:[]} : null,
-  evolucoes: e => dataOk(e.data) && (e.pacienteId || e.paciente) ? {...e, prof:e.prof||'p1'} : null
+  evolucoes: e => dataOk(e.data) && (e.pacienteId || e.paciente) ? {...e, prof:e.prof||'p1'} : null,
+  contas: c => c.nome ? {...c, local:c.local==='Casa'?'Casa':'Consultório', dia:Math.min(Math.max(+c.dia||1,1),31), valor:num(c.valor), ativa:c.ativa!==false, desde:c.desde||'2000-01'} : null
 };
 
 function toast(t){ const el = document.getElementById('toast'); el.textContent = t; el.hidden = false; clearTimeout(toast.t); toast.t = setTimeout(()=>el.hidden=true, 3200); }
@@ -365,7 +366,7 @@ const aniverPendentes = () => aniverHoje().filter(p=>p.fone && p.parabensEnviado
 function msgAniver(p){ return `Olá, ${primeiroNome(p.nome)}! 🎉\n\nA equipe da Dra. Iolanda Alves Odontologia deseja a você um feliz aniversário! Que o seu dia seja cheio de alegria e muitos sorrisos. 😁🦷\n\nUm grande abraço!`; }
 
 function renderTabs(){
-  document.getElementById('tabs').innerHTML = TABS.map(([k,l])=>{ const n = k==='confirm'?pendAmanha():k==='estoque'?estAlert():k==='aniver'?aniverPendentes():0;
+  document.getElementById('tabs').innerHTML = TABS.map(([k,l])=>{ const n = k==='confirm'?pendAmanha():k==='estoque'?estAlert():k==='aniver'?aniverPendentes():k==='contas'?contasAlerta().length:0;
     return `<button role="tab" aria-selected="${k===tab}" data-tab="${k}">${l}${n?`<span class="badge">${n}</span>`:''}</button>`; }).join('');
 }
 function go(t){ tab = t; render(); window.scrollTo({top:0}); }
@@ -393,6 +394,7 @@ V.inicio = () => {
     <div class="card"><h3>Faturamento por profissional</h3>${bars(porProf)}
       <div class="mt" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap"><span class="chip c-warn">${pendAmanha()} confirmações pendentes para amanhã</span><button class="btn sm ghost" data-go="confirm">Abrir confirmações</button></div>
       ${aniverHoje().length?`<div class="mt" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap"><span class="chip c-neu">🎂 ${aniverHoje().length} ${aniverHoje().length>1?'aniversariantes':'aniversariante'} hoje</span><button class="btn sm ghost" data-go="aniver">Ver aniversários</button></div>`:''}
+      ${contasAlerta().length?`<div class="mt" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap"><span class="chip c-bad">${contasAlerta().length} ${contasAlerta().length>1?'contas vencendo ou atrasadas':'conta vencendo ou atrasada'}</span><button class="btn sm ghost" data-go="contas">Ver contas</button></div>`:''}
       ${estAlert()?`<div class="mt" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap"><span class="chip c-bad">${estAlert()} ${estAlert()>1?'itens':'item'} do estoque para repor ou vencendo</span><button class="btn sm ghost" data-go="estoque">Ver estoque</button></div>`:''}</div>
   </div>`;
 };
@@ -550,7 +552,7 @@ function calcAt(){
 }
 
 // Despesas: todas as saídas do consultório, inclusive o pagamento dos colaboradores (protético, dentista parceira, especialistas).
-const DCAT = ['Colaboradores','Laboratório / prótese','Aluguel e condomínio','Água, luz, internet e telefone','Material odontológico','Impostos e contador','Funcionários','Manutenção e equipamentos','Marketing','Outros'];
+const DCAT = ['Casa','Colaboradores','Laboratório / prótese','Aluguel e condomínio','Água, luz, internet e telefone','Material odontológico','Impostos e contador','Funcionários','Manutenção e equipamentos','Marketing','Outros'];
 const DFIXA = ['Aluguel e condomínio','Água, luz, internet e telefone','Impostos e contador','Funcionários'];
 const FUNCOES = ['Dentista parceira','Implantodontista','Endodontista','Ortodontista','Protético','Secretária','Auxiliar','Outro'];
 const DFORMAS = ['Pix','Dinheiro','Transferência','Boleto','Cartão'];
@@ -559,6 +561,52 @@ const addMes = (m,n) => { const d = new Date(m+'-15T12:00'); d.setMonth(d.getMon
 const colabDe = id => S.colabs.find(c=>c.id===id);
 const catDe = d => d.cat || (/^Estoque:/.test(d.desc) ? 'Material odontológico' : 'Outros');
 const sitChip = d => d.pago ? '<span class="chip c-ok">Pago</span>' : d.data < TODAY ? '<span class="chip c-bad">Atrasada</span>' : '<span class="chip c-warn">A pagar</span>';
+
+// Contas a pagar: compromissos de todo mês (casa e consultório). Cada pagamento vira uma despesa com contaId e mes.
+let contaEdit = null;
+const vencDe = (c, m) => m+'-'+String(Math.min(c.dia, ultimoDia(m))).padStart(2,'0');
+const pagtoDe = (c, m) => S.desp.find(d=>d.contaId===c.id && d.mes===m);
+const contasDoMes = m => S.contas.filter(c=>c.ativa && c.desde<=m).map(c=>({c, venc:vencDe(c,m), pg:pagtoDe(c,m)})).sort((a,b)=>a.venc.localeCompare(b.venc) || a.c.nome.localeCompare(b.c.nome,'pt-BR'));
+const diasAte = d => Math.round((Date.parse(d+'T12:00') - Date.parse(TODAY+'T12:00')) / 864e5);
+const contasAlerta = () => contasDoMes(MES).filter(x=>!x.pg && diasAte(x.venc)<=3);
+const ultimoPago = c => S.desp.filter(d=>d.contaId===c.id).sort((a,b)=>(b.mes||'').localeCompare(a.mes||''))[0];
+function contaChip(x){
+  if(x.pg) return `<span class="chip c-ok">Pago ${fmtD(x.pg.pagoEm||x.pg.data).slice(0,5)}</span>`;
+  const n = diasAte(x.venc);
+  return n<0 ? `<span class="chip c-bad">Atrasada ${-n} ${-n>1?'dias':'dia'}</span>` : n===0 ? '<span class="chip c-bad">Vence hoje</span>' : n<=3 ? `<span class="chip c-warn">Vence em ${n} ${n>1?'dias':'dia'}</span>` : '<span class="chip c-neu">A vencer</span>';
+}
+V.contas = () => {
+  const m = contasMes || MES, todas = contasDoMes(m), lista = contasLocal ? todas.filter(x=>x.c.local===contasLocal) : todas;
+  const val = x => x.pg ? x.pg.valor : x.c.valor, soma = xs => xs.reduce((s,x)=>s+val(x),0);
+  const prev = soma(lista), pago = soma(lista.filter(x=>x.pg)), atras = lista.filter(x=>!x.pg && diasAte(x.venc)<0).length;
+  const porLocal = l => { const xs = todas.filter(x=>x.c.local===l); return xs.length ? `${brl(soma(xs.filter(x=>x.pg)))} pagos de ${brl(soma(xs))}` : 'nenhuma conta'; };
+  const ed = contaEdit && S.contas.find(c=>c.id===contaEdit);
+  const linha = x => { const c = x.c, aberta = contaPagar===c.id && !x.pg, sug = (c.varia && ultimoPago(c)) ? ultimoPago(c).valor : c.valor;
+    return `<tr><td class="num" data-label="Vence">${fmtD(x.venc).slice(0,5)}</td><td class="full"><b>${esc(c.nome)}</b> <span class="chip ${c.local==='Casa'?'c-warn':'c-neu'}">${c.local}</span>${c.varia?'<br><small class="muted">valor varia todo mês</small>':''}${x.pg&&x.pg.forma?`<br><small class="muted">${esc(x.pg.forma)}</small>`:''}</td><td class="r num" data-label="Valor">${x.pg ? brl(x.pg.valor) : (c.varia?'~ ':'') + brl(c.valor)}</td><td data-label="Situação">${contaChip(x)}</td><td class="acao" style="white-space:nowrap">${x.pg ? `<button class="x" data-del="despesas:${x.pg.id}" aria-label="Desfazer pagamento" title="Desfazer pagamento">✕</button>` : aberta ? '' : `<button class="btn sm wa" data-pagarconta="${c.id}">Pagar</button>`}</td></tr>
+    ${aberta ? `<tr class="pagar-row"><td colspan="5" class="full"><form id="fPagarConta" data-conta="${c.id}" data-mes="${m}"><div class="row"><label>Valor pago (R$)<input id="pgValor" type="number" min="0" step="0.01" required value="${sug}"></label><label>Data do pagamento<input id="pgData" type="date" required value="${TODAY}"></label><label>Forma<select id="pgForma">${DFORMAS.map(f=>`<option ${f===(c.forma||'Pix')?'selected':''}>${f}</option>`).join('')}</select></label></div><div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn" type="submit">Confirmar pagamento</button><button class="btn ghost" type="button" data-cancelpag="1">Cancelar</button></div></form></td></tr>` : ''}`; };
+  return `<h2>Contas a pagar</h2><p class="lead">Os compromissos de todo mês, da casa e do consultório. Toque em Pagar no dia do pagamento e confira o valor: as contas pagas entram nas Despesas e no Fluxo de caixa.</p>
+  <div class="daynav"><button class="btn sm ghost" data-cmes="-1" aria-label="Mês anterior">‹</button><b style="text-transform:capitalize">${mesTxt(m)}</b><button class="btn sm ghost" data-cmes="1" aria-label="Próximo mês">›</button></div>
+  <div class="seg" role="group" aria-label="Mostrar contas" style="margin-bottom:14px">${[['','Todas'],['Consultório','Consultório'],['Casa','Casa']].map(([v,l])=>`<button type="button" data-clocal="${v}" aria-pressed="${contasLocal===v}">${l}</button>`).join('')}</div>
+  <div class="kpis">
+    <div class="kpi"><span>Total do mês</span><b>${brl(prev)}</b></div>
+    <div class="kpi"><span>Já pago</span><b class="pos">${brl(pago)}</b></div>
+    <div class="kpi"><span>Falta pagar${atras?` · ${atras} atrasada${atras>1?'s':''}`:''}</span><b class="${prev-pago?'neg':''}">${brl(prev-pago)}</b></div>
+    <div class="kpi main"><span>Consultório · Casa</span><b style="font-size:.9rem;line-height:1.5;display:block">${porLocal('Consultório')}<br>${porLocal('Casa')}</b></div>
+  </div>
+  <div class="grid split">
+    <div class="card"><h3>Contas de ${mesTxt(m)} · ${lista.length}</h3>${lista.length ? `<div class="tbl-wrap"><table class="resp"><thead><tr><th>Vence</th><th>Conta</th><th class="r">Valor</th><th>Situação</th><th></th></tr></thead><tbody>${lista.map(linha).join('')}</tbody></table></div>` : '<p class="empty">Nenhuma conta cadastrada. Use o formulário ao lado.</p>'}
+      <p class="note">"~" é o valor de sempre, só uma previsão. O ✕ numa conta paga desfaz o pagamento.</p></div>
+    <form class="card" id="fConta" style="align-self:start"><h3>${ed?'Editar conta':'Cadastrar conta'}</h3>
+      <div class="row"><label>Nome da conta<input id="ctNome" required value="${esc(ed?ed.nome:'')}" placeholder="Ex.: Energia, Aluguel, Internet"></label></div>
+      <div class="row"><label>Onde<select id="ctLocal"><option ${ed&&ed.local==='Consultório'?'selected':''}>Consultório</option><option ${ed&&ed.local==='Casa'?'selected':''}>Casa</option></select></label><label>Vence todo dia<input id="ctDia" type="number" min="1" max="31" required value="${ed?ed.dia:10}"></label></div>
+      <div class="row"><label>Valor de sempre (R$)<input id="ctValor" type="number" min="0" step="0.01" required value="${ed?ed.valor:''}" placeholder="0,00"></label><label>Categoria<select id="ctCat">${DCAT.map(c=>`<option ${(ed?ed.cat:'')===c?'selected':''}>${c}</option>`).join('')}</select></label></div>
+      <label class="chk"><input id="ctVaria" type="checkbox" ${ed&&ed.varia?'checked':''}> O valor muda todo mês (luz, água…)</label>
+      <div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn" type="submit">${ed?'Salvar':'Cadastrar conta'}</button>${ed?'<button class="btn ghost" type="button" data-cancelconta="1">Cancelar</button>':''}</div>
+    </form>
+  </div>
+  <div class="card mt"><h3>Contas cadastradas · ${S.contas.filter(c=>c.ativa).length}</h3>${S.contas.filter(c=>c.ativa).length ? `<div class="tbl-wrap"><table class="resp"><thead><tr><th>Conta</th><th>Onde</th><th class="r">Dia</th><th class="r">Valor</th><th></th></tr></thead><tbody>${S.contas.filter(c=>c.ativa).sort((a,b)=>a.dia-b.dia || a.nome.localeCompare(b.nome,'pt-BR')).map(c=>`<tr><td class="full"><b>${esc(c.nome)}</b>${c.varia?' <small class="muted">· varia</small>':''}</td><td data-label="Onde">${c.local}</td><td class="r num" data-label="Vence dia">${c.dia}</td><td class="r num" data-label="Valor">${brl(c.valor)}</td><td class="acao" style="white-space:nowrap"><button class="btn sm ghost" data-editconta="${c.id}">Editar</button> <button class="x" data-desativar="${c.id}" aria-label="Remover conta" title="Remover conta">✕</button></td></tr>`).join('')}</tbody></table></div>` : '<p class="muted" style="margin:0">Nenhuma conta cadastrada.</p>'}
+    <p class="note">Remover uma conta só tira ela dos próximos meses. Os pagamentos já feitos continuam nas Despesas.</p></div>`;
+};
 
 V.despesas = () => {
   const m = despMes || MES;
@@ -944,7 +992,7 @@ document.addEventListener('click', e => {
   if(esc_){ const campo = document.getElementById(esc_.dataset.campo); campo.value = esc_.dataset.escolher; esc_.parentElement.hidden = true;
     const alvo = campo.dataset.sug && document.getElementById(campo.dataset.sug); if(alvo && esc_.dataset.fone) alvo.value = esc_.dataset.fone; return; }
   if(!e.target.closest('.sug')) document.querySelectorAll('.sug-lista').forEach(l=>l.hidden = true);
-  const t = e.target.closest('[data-tab],[data-go],[data-day],[data-hoje],[data-atender],[data-sel],[data-sent],[data-st],[data-del],[data-delproc],[data-usar],[data-comprar],[data-abrirpac],[data-ficha],[data-voltarpac],[data-imprimir],[data-editpac],[data-plano],[data-delplano],[data-dmes],[data-dfiltro],[data-pagar],[data-delcolab],[data-cxvis],[data-cxdia],[data-cxnav],[data-cxhoje],[data-avisar],[data-fecharaviso],[data-parabens],#addProc,#backup,#sair,#sair2,#sair3,#esqueci,#trocarSenha');
+  const t = e.target.closest('[data-tab],[data-go],[data-day],[data-hoje],[data-atender],[data-sel],[data-sent],[data-st],[data-del],[data-delproc],[data-usar],[data-comprar],[data-abrirpac],[data-ficha],[data-voltarpac],[data-imprimir],[data-editpac],[data-plano],[data-delplano],[data-dmes],[data-dfiltro],[data-pagar],[data-delcolab],[data-cxvis],[data-cxdia],[data-cxnav],[data-cxhoje],[data-avisar],[data-fecharaviso],[data-parabens],[data-cmes],[data-clocal],[data-pagarconta],[data-cancelpag],[data-editconta],[data-cancelconta],[data-desativar],#addProc,#backup,#sair,#sair2,#sair3,#esqueci,#trocarSenha');
   if(!t) return;
   if(['sair','sair2','sair3'].includes(t.id)) return signOut(auth);
   if(t.id==='esqueci'){
@@ -963,6 +1011,15 @@ document.addEventListener('click', e => {
   if('editpac' in t.dataset){ pacEdit = t.dataset.editpac || null; return render(); }
   if(t.dataset.plano){ const p = S.pac.find(x=>x.id===pacSel); if(!p) return;
     put('pacientes', {...p, plano:p.plano.map(it=>it.id===t.dataset.plano?{...it, feito:!it.feito, feitoEm:!it.feito?TODAY:''}:it)}); return render(); }
+  if(t.dataset.cmes){ contasMes = addMes(contasMes || MES, +t.dataset.cmes); contaPagar = null; return render(); }
+  if('clocal' in t.dataset){ contasLocal = t.dataset.clocal; return render(); }
+  if(t.dataset.pagarconta){ contaPagar = t.dataset.pagarconta; render(); const v = document.getElementById('pgValor'); if(v){ v.focus(); v.select(); } return; }
+  if(t.dataset.cancelpag){ contaPagar = null; return render(); }
+  if(t.dataset.editconta){ contaEdit = t.dataset.editconta; render(); document.getElementById('fConta').scrollIntoView({block:'center'}); return; }
+  if(t.dataset.cancelconta){ contaEdit = null; return render(); }
+  if(t.dataset.desativar){ const c = S.contas.find(x=>x.id===t.dataset.desativar); if(!c) return;
+    if(!t.classList.contains('armed')){ t.classList.add('armed'); t.textContent='Remover?'; return; }
+    put('contas', {...c, ativa:false, ate:contasMes||MES}); if(contaEdit===c.id) contaEdit = null; render(); return toast('Conta removida dos próximos meses'); }
   if(t.dataset.cxvis){ caixaVis = t.dataset.cxvis; if(caixaVis==='dia' && !caixaDia) caixaDia = TODAY; return render(); }
   if(t.dataset.cxdia){ caixaVis = 'dia'; caixaDia = t.dataset.cxdia; render(); return window.scrollTo({top:0}); }
   if(t.dataset.cxnav){ caixaDia = addDays(caixaDia || TODAY, +t.dataset.cxnav); return render(); }
@@ -1041,6 +1098,7 @@ document.addEventListener('change', e => {
   if(e.target.id==='atProc'){ const p = S.procs.find(x=>x.nome===e.target.value); if(p) document.getElementById('atValor').value = p.valor; calcAt(); }
   if(['atForma','atParc'].includes(e.target.id)) calcAt();
   if(e.target.id==='agPac'){ const p = pacientes().find(x=>x.nome.toLowerCase()===e.target.value.trim().toLowerCase()); const f = document.getElementById('agFone'); if(p && p.fone && !f.value) f.value = p.fone; }
+  if(e.target.id==='ctLocal' && e.target.value==='Casa') document.getElementById('ctCat').value = 'Casa';
   if(e.target.id==='dpFiltro'){ despFiltro = e.target.value; return render(); }
   if(e.target.id==='dpCat') document.getElementById('dpTipo').value = DFIXA.includes(e.target.value) ? 'Fixa' : 'Variável';
   if(e.target.id==='dpColab' && e.target.value){ const c = colabDe(e.target.value), cat = document.getElementById('dpCat'), ds = document.getElementById('dpDesc');
@@ -1081,6 +1139,14 @@ document.addEventListener('submit', e => {
     put('despesas', {id:novoId(), data, desc:$('dpDesc').trim(), valor:parseFloat($('dpValor'))||0, cat:$('dpCat'), tipo:$('dpTipo'), colab:$('dpColab'), forma:$('dpForma'),
       paciente: pac ? pac.nome : pacNome, pacienteId: pac ? pac.id : '', mensal, pagoEm: pago ? TODAY : '', ...(mensal ? {pagos: pago ? [data.slice(0,7)] : []} : {pago})});
     despMes = data.slice(0,7); render(); return toast(mensal ? 'Despesa lançada para todos os meses' : 'Despesa lançada'); }
+  if(id==='fConta'){ const base = contaEdit && S.contas.find(c=>c.id===contaEdit);
+    const dados = {nome:$('ctNome').trim(), local:$('ctLocal'), dia:Math.min(Math.max(parseInt($('ctDia'))||1,1),31), valor:parseFloat($('ctValor'))||0, cat:$('ctCat'), varia:document.getElementById('ctVaria').checked};
+    put('contas', base ? {...base, ...dados} : {id:novoId(), ...dados, ativa:true, desde:contasMes||MES, criadoEm:TODAY});
+    contaEdit = null; render(); return toast(base ? 'Conta atualizada' : 'Conta cadastrada'); }
+  if(id==='fPagarConta'){ const c = S.contas.find(x=>x.id===e.target.dataset.conta), mes = e.target.dataset.mes; if(!c) return;
+    const dataPg = $('pgData');
+    put('despesas', {id:novoId(), data:dataPg, desc:c.nome + (c.local==='Casa' && !/casa/i.test(c.nome) ? ' (casa)' : ''), valor:parseFloat($('pgValor'))||0, cat:c.local==='Casa'?'Casa':(c.cat||'Outros'), tipo:'Fixa', local:c.local, contaId:c.id, mes, forma:$('pgForma'), pago:true, pagoEm:dataPg, mensal:false});
+    contaPagar = null; render(); return toast('Pagamento lançado nas Despesas'); }
   if(id==='fColab'){ S.colabs = [...S.colabs, {id:novoId(), nome:$('clNome').trim(), funcao:$('clFuncao')}]; saveConfig(); render(); return toast('Colaborador cadastrado'); }
   if(id==='fDe'){ const mensal = document.getElementById('deMensal').checked;
     put('despesas', {id:novoId(),data:$('deData'),tipo:$('deTipo'),desc:$('deDesc').trim(),valor:parseFloat($('deValor'))||0,mensal});

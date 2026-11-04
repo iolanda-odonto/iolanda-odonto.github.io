@@ -265,7 +265,7 @@ let db;
 try { db = initializeFirestore(fb, {localCache: persistentLocalCache({tabManager: persistentMultipleTabManager()})}); }
 catch(e){ db = initializeFirestore(fb, {}); }
 
-const VERSAO = '26/10/2026 · 9'; // aumentar a cada envio ao GitHub, para conferir se o celular pegou a atualização
+const VERSAO = '04/11/2026 · 10'; // aumentar a cada envio ao GitHub, para conferir se o celular pegou a atualização
 const FORMAS = ['Pix','Dinheiro','Débito','Crédito à vista','Crédito parcelado'];
 const TABS = [['inicio','Início'],['dash','Dashboard'],['agenda','Agenda'],['pacientes','Pacientes'],['confirm','Confirmações'],['aniver','Aniversários'],['atend','Atendimentos'],['caixa','Fluxo de caixa'],['despesas','Despesas'],['contas','Contas a pagar'],['estoque','Estoque'],['rel','Relatórios'],['config','Configurações']];
 const brl = v => (v||0).toLocaleString('pt-BR',{style:'currency',currency:'BRL'});
@@ -345,7 +345,15 @@ function resumo(m = MES, ateDia = 31){
   return {at,de,bruto,liquido,taxas:bruto-liquido,fixa,vari,saldo:liquido-fixa-vari};
 }
 const mesNome = () => new Date(TODAY+'T12:00').toLocaleDateString('pt-BR',{month:'long',year:'numeric'});
-const pendAmanha = () => S.agenda.filter(a=>a.data===addDays(TODAY,1) && ['pendente','enviado'].includes(stAg(a))).length;
+// Confirmações: quem é atendido à tarde confirma na manhã do mesmo dia; quem é atendido de manhã confirma na tarde do dia anterior.
+const MEIO_DIA = '12:00';
+const ehTarde = a => (a.hora||'') >= MEIO_DIA;
+const porHora = (a,b) => (a.hora||'').localeCompare(b.hora||'');
+const gruposConfirmar = () => ({
+  tardeHoje: S.agenda.filter(a=>a.data===TODAY && ehTarde(a)).sort(porHora),
+  manhaAmanha: S.agenda.filter(a=>a.data===addDays(TODAY,1) && !ehTarde(a)).sort(porHora)
+});
+const pendAmanha = () => { const g = gruposConfirmar(); return [...g.tardeHoje, ...g.manhaAmanha].filter(a=>['pendente','enviado'].includes(stAg(a))).length; };
 const estBaixo = i => i.qtd <= i.min;
 const estVence = i => !!i.val && i.val <= addDays(TODAY,30);
 const estAlert = () => S.estoque.filter(i=>estBaixo(i)||estVence(i)).length;
@@ -392,7 +400,7 @@ V.inicio = () => {
   <div class="grid g2">
     <div class="card"><h3>Agenda de hoje · ${hoje.length} ${hoje.length===1?'paciente':'pacientes'}</h3>${hoje.length?hoje.map(a=>`<div class="slot"><span class="h">${a.hora}</span><div class="who"><b>${esc(a.paciente)}</b><small>${esc(a.proc)} · ${esc(profCurto(a.prof))}</small></div><div class="act">${viaClaude(a)}${chip(stAg(a))}</div></div>`).join(''):'<p class="empty">Nenhum paciente hoje.</p>'}</div>
     <div class="card"><h3>Faturamento por profissional</h3>${bars(porProf)}
-      <div class="mt" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap"><span class="chip c-warn">${pendAmanha()} confirmações pendentes para amanhã</span><button class="btn sm ghost" data-go="confirm">Abrir confirmações</button></div>
+      <div class="mt" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap"><span class="chip c-warn">${pendAmanha()} ${pendAmanha()===1?'confirmação pendente':'confirmações pendentes'}</span><button class="btn sm ghost" data-go="confirm">Abrir confirmações</button></div>
       ${aniverHoje().length?`<div class="mt" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap"><span class="chip c-neu">🎂 ${aniverHoje().length} ${aniverHoje().length>1?'aniversariantes':'aniversariante'} hoje</span><button class="btn sm ghost" data-go="aniver">Ver aniversários</button></div>`:''}
       ${contasAlerta().length?`<div class="mt" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap"><span class="chip c-bad">${contasAlerta().length} ${contasAlerta().length>1?'contas vencendo ou atrasadas':'conta vencendo ou atrasada'}</span><button class="btn sm ghost" data-go="contas">Ver contas</button></div>`:''}
       ${estAlert()?`<div class="mt" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap"><span class="chip c-bad">${estAlert()} ${estAlert()>1?'itens':'item'} do estoque para repor ou vencendo</span><button class="btn sm ghost" data-go="estoque">Ver estoque</button></div>`:''}</div>
@@ -484,24 +492,29 @@ function msgMarcacao(a){
 }
 function msgConf(a){
   const link = a.conf ? CONF_URL+'?id='+a.conf : '(o link é criado quando você tocar em Enviar)';
-  return `Olá, ${primeiroNome(a.paciente)}! Aqui é do consultório Dra. Iolanda Alves Odontologia.\n\nSua consulta está marcada para ${diaSem(a.data)}, ${fmtD(a.data)}, às ${a.hora}, com ${profCurto(a.prof)} (${a.proc}).\n\nToque no link para confirmar ou pedir remarcação:\n${link}`;
+  const quando = a.data===TODAY ? `hoje (${diaSem(a.data)}, ${fmtD(a.data)})` : a.data===addDays(TODAY,1) ? `amanhã (${diaSem(a.data)}, ${fmtD(a.data)})` : `${diaSem(a.data)}, ${fmtD(a.data)}`;
+  return `Olá, ${primeiroNome(a.paciente)}! Aqui é do consultório Dra. Iolanda Alves Odontologia.\n\nSua consulta está marcada para ${quando}, às ${a.hora}, com ${profCurto(a.prof)} (${a.proc}).\n\nToque no link para confirmar ou pedir remarcação:\n${link}`;
 }
+const linhaConf = x => `<div class="slot slot-ag" style="${x.id===selConf?'background:var(--plum-soft);margin-inline:-10px;padding-inline:10px;border-radius:8px':''}"><span class="h">${x.hora}</span><div class="who"><b>${esc(x.paciente)}</b><small>${esc(x.proc)} · ${esc(profCurto(x.prof))}${x.fone?'':' · <span class="neg">sem WhatsApp</span>'}</small><div style="margin-top:4px">${viaClaude(x)}${chip(stAg(x))}</div></div>
+        <div class="act"><button class="btn sm ghost" data-sel="${x.id}">Ver mensagem</button><button class="btn sm wa" data-sent="${x.id}" ${x.fone?'':'disabled'}>Enviar</button><button class="btn sm ghost" data-st="${x.id}:confirmado" title="Marcar como confirmado">Confirmou</button><button class="btn sm ghost" data-st="${x.id}:remarcar" title="Marcar que pediu para remarcar">Remarcar</button></div></div>`;
 V.confirm = () => {
-  const amanha = addDays(TODAY,1);
-  const lista = S.agenda.filter(a=>a.data===amanha).sort((a,b)=>a.hora.localeCompare(b.hora));
-  if(!selConf || !lista.find(a=>a.id===selConf)) selConf = lista[0]?.id;
+  const g = gruposConfirmar(), manhaAgora = new Date().getHours() < 12;
+  const blocos = [
+    {chave:'tardeHoje', titulo:`Tarde de hoje · ${diaSem(TODAY)}, ${fmtD(TODAY)}`, quando:'confirmar de manhã', agora:manhaAgora, lista:g.tardeHoje, vazio:'Nenhum paciente hoje à tarde.'},
+    {chave:'manhaAmanha', titulo:`Manhã de amanhã · ${diaSem(addDays(TODAY,1))}, ${fmtD(addDays(TODAY,1))}`, quando:'confirmar à tarde', agora:!manhaAgora, lista:g.manhaAmanha, vazio:'Nenhum paciente amanhã de manhã.'}
+  ].sort((a,b)=>b.agora-a.agora);
+  const lista = blocos.flatMap(b=>b.lista);
+  if(!selConf || !lista.find(a=>a.id===selConf)) selConf = (blocos[0].lista[0] || lista[0])?.id;
   const a = lista.find(x=>x.id===selConf);
   let phone = '<p class="empty">Selecione um paciente.</p>';
   if(a){
     const st = stAg(a), resp = st==='confirmado'?'<div class="sysmsg">✓ Paciente confirmou</div>':st==='remarcar'?'<div class="sysmsg">Paciente pediu para remarcar</div>':'';
     phone = `<div class="phone"><div class="pt"><i>${esc(a.paciente[0])}</i>${esc(a.paciente)}</div><div class="chatbody"><div class="sysmsg">O que o paciente recebe</div><div class="bubble">${esc(msgConf(a))}</div>${resp}</div></div>`;
   }
-  return `<h2>Confirmações de amanhã</h2><p class="lead">${diaSem(amanha)}, ${fmtD(amanha)}. Toque em <b>Enviar</b> e o WhatsApp abre com a mensagem pronta. Quando o paciente responde pelo link, o status muda sozinho aqui.</p>
-  <div class="steps"><div>O sistema monta a mensagem com nome, dia, horário e profissional.</div><div>Você toca em Enviar e confirma no seu WhatsApp.</div><div>O paciente toca no link e escolhe confirmar ou remarcar.</div><div>O status volta para a agenda sem ninguém digitar nada.</div></div>
+  return `<h2>Confirmações</h2><p class="lead">Quem é atendido <b>à tarde</b> confirma <b>de manhã</b>, no mesmo dia. Quem é atendido <b>de manhã</b> confirma <b>à tarde</b>, no dia anterior. Toque em <b>Enviar</b> e o WhatsApp abre com a mensagem pronta; a resposta do paciente pelo link muda o status sozinha.</p>
   <div class="grid split">
-    <div class="card"><h3>${lista.length} ${lista.length===1?'paciente':'pacientes'} amanhã</h3>
-      ${lista.length?lista.map(x=>`<div class="slot" style="${x.id===selConf?'background:var(--plum-soft);margin-inline:-10px;padding-inline:10px;border-radius:8px':''}"><span class="h">${x.hora}</span><div class="who"><b>${esc(x.paciente)}</b><small>${esc(x.proc)} · ${esc(profCurto(x.prof))}${x.fone?'':' · <span class="neg">sem WhatsApp</span>'}</small><div style="margin-top:4px">${viaClaude(x)}${chip(stAg(x))}</div></div>
-        <div class="act"><button class="btn sm ghost" data-sel="${x.id}">Ver mensagem</button><button class="btn sm wa" data-sent="${x.id}" ${x.fone?'':'disabled'}>Enviar</button><button class="btn sm ghost" data-st="${x.id}:confirmado" title="Marcar como confirmado">Confirmou</button><button class="btn sm ghost" data-st="${x.id}:remarcar" title="Marcar que pediu para remarcar">Remarcar</button></div></div>`).join(''):'<p class="empty">Nenhum paciente agendado para amanhã.</p>'}
+    <div>${blocos.map(b=>`<div class="card" style="margin-bottom:16px${b.agora?';border-color:var(--plum)':''}"><h3>${b.titulo} · ${b.lista.length}</h3><p class="note" style="margin:-4px 0 8px">${b.agora?'<span class="chip c-neu">agora</span> ':''}${b.quando}</p>
+      ${b.lista.length ? b.lista.map(linhaConf).join('') : `<p class="empty">${b.vazio}</p>`}</div>`).join('')}
       <p class="note">Se o paciente responder por mensagem em vez do link, use <b>Confirmou</b> ou <b>Remarcar</b> para marcar à mão.</p>
     </div>
     <div>${phone}</div>
@@ -1049,8 +1062,9 @@ document.addEventListener('click', e => {
     put('agenda', novo);
     abrirWa(a.fone, msgConf(novo));
     // Já deixa selecionado o próximo paciente de amanhã que ainda não recebeu o lembrete
-    const prox = S.agenda.filter(x=>x.data===a.data && x.fone && stAg(x)==='pendente' && x.id!==a.id).sort((x,y)=>x.hora.localeCompare(y.hora))[0];
-    selConf = prox ? prox.id : a.id; render(); toast(prox ? `Enviado. Próximo: ${primeiroNome(prox.paciente)}` : 'WhatsApp aberto. Todos os lembretes de amanhã foram enviados.'); return;
+    const gc = gruposConfirmar(), grupo = gc.tardeHoje.some(x=>x.id===a.id) ? gc.tardeHoje : gc.manhaAmanha;
+    const prox = grupo.find(x=>x.fone && stAg(x)==='pendente' && x.id!==a.id);
+    selConf = prox ? prox.id : a.id; render(); toast(prox ? `Enviado. Próximo: ${primeiroNome(prox.paciente)}` : 'WhatsApp aberto. Todos desta lista já receberam o lembrete.'); return;
   }
   if(t.dataset.avisar){ const a = S.agenda.find(x=>x.id===t.dataset.avisar); if(!a) return;
     if(!a.fone) return toast('Cadastre o WhatsApp do paciente');

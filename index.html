@@ -265,9 +265,9 @@ let db;
 try { db = initializeFirestore(fb, {localCache: persistentLocalCache({tabManager: persistentMultipleTabManager()})}); }
 catch(e){ db = initializeFirestore(fb, {}); }
 
-const VERSAO = '04/11/2026 · 10'; // aumentar a cada envio ao GitHub, para conferir se o celular pegou a atualização
+const VERSAO = '07/11/2026 · 11'; // aumentar a cada envio ao GitHub, para conferir se o celular pegou a atualização
 const FORMAS = ['Pix','Dinheiro','Débito','Crédito à vista','Crédito parcelado'];
-const TABS = [['inicio','Início'],['dash','Dashboard'],['agenda','Agenda'],['pacientes','Pacientes'],['confirm','Confirmações'],['aniver','Aniversários'],['atend','Atendimentos'],['caixa','Fluxo de caixa'],['despesas','Despesas'],['contas','Contas a pagar'],['estoque','Estoque'],['rel','Relatórios'],['config','Configurações']];
+const TABS = [['inicio','Início'],['dash','Dashboard'],['agenda','Agenda'],['pacientes','Pacientes'],['confirm','Confirmações'],['aniver','Aniversários'],['atend','Atendimentos'],['caixa','Fluxo de caixa'],['despesas','Despesas'],['contas','Contas a pagar'],['impostos','Impostos'],['estoque','Estoque'],['rel','Relatórios'],['config','Configurações']];
 const brl = v => (v||0).toLocaleString('pt-BR',{style:'currency',currency:'BRL'});
 const pct = v => (v||0).toLocaleString('pt-BR',{maximumFractionDigits:2})+'%';
 const iso = d => d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
@@ -292,7 +292,8 @@ const DEF = {
   procs: [['Avaliação',100],['Limpeza (profilaxia)',180],['Restauração em resina',250],['Extração simples',300],['Aplicação de flúor',80],['Clareamento',900],['Tratamento de canal',1200],['Manutenção ortodôntica',150]].map(([nome,valor],i)=>({id:'pr'+(i+1),nome,valor})),
   taxas: TAXAS_EXEMPLO
 };
-const vazio = () => ({profs:DEF.profs, procs:DEF.procs, taxas:{...DEF.taxas}, colabs:[], agenda:[], atend:[], desp:[], estoque:[], movEst:[], conf:[], pac:[], evo:[], contas:[]});
+const DEF_IMP = {regime:'simples', prolabore:2800, outrosSal:0, rbt12:0, dia:20, aliqFixa:6, inss:11};
+const vazio = () => ({profs:DEF.profs, procs:DEF.procs, taxas:{...DEF.taxas}, colabs:[], impostos:{...DEF_IMP}, agenda:[], atend:[], desp:[], estoque:[], movEst:[], conf:[], pac:[], evo:[], contas:[]});
 let S = vazio(), user = null, unsubs = [], carregados = new Set(), cfgCriada = false;
 let despMes = null, despFiltro = '', contasMes = null, contasLocal = '', contaPagar = null;
 let tab = 'inicio', agDay = TODAY, selConf = null, prefill = null, estSel = null, estTipo = 'Saída', pacSel = null, pacEdit = null;
@@ -321,7 +322,7 @@ function put(col, o){
   setDoc(doc(db,col,o.id), corpo(o)).catch(erro);
 }
 function del(col, id){ S[COLS[col]] = S[COLS[col]].filter(x=>x.id!==id); deleteDoc(doc(db,col,id)).catch(erro); }
-function saveConfig(){ setDoc(doc(db,'config','geral'), {profs:S.profs, procs:S.procs, taxas:S.taxas, colabs:S.colabs}).catch(erro); }
+function saveConfig(){ setDoc(doc(db,'config','geral'), {profs:S.profs, procs:S.procs, taxas:S.taxas, colabs:S.colabs, impostos:S.impostos}).catch(erro); }
 
 const profNome = id => (S.profs.find(p=>p.id===id)||{}).nome || '—';
 const profCurto = id => profNome(id).replace(/\s*\(.*\)/,'');
@@ -569,6 +570,7 @@ const DCAT = ['Casa','Colaboradores','Laboratório / prótese','Aluguel e condom
 const DFIXA = ['Aluguel e condomínio','Água, luz, internet e telefone','Impostos e contador','Funcionários'];
 const FUNCOES = ['Dentista parceira','Implantodontista','Endodontista','Ortodontista','Protético','Secretária','Auxiliar','Outro'];
 const DFORMAS = ['Pix','Dinheiro','Transferência','Boleto','Cartão'];
+const capMes = s => s.charAt(0).toUpperCase() + s.slice(1);
 const mesTxt = m => new Date(m+'-15T12:00').toLocaleDateString('pt-BR',{month:'long',year:'numeric'});
 const addMes = (m,n) => { const d = new Date(m+'-15T12:00'); d.setMonth(d.getMonth()+n); return iso(d).slice(0,7); };
 const colabDe = id => S.colabs.find(c=>c.id===id);
@@ -588,17 +590,98 @@ function contaChip(x){
   const n = diasAte(x.venc);
   return n<0 ? `<span class="chip c-bad">Atrasada ${-n} ${-n>1?'dias':'dia'}</span>` : n===0 ? '<span class="chip c-bad">Vence hoje</span>' : n<=3 ? `<span class="chip c-warn">Vence em ${n} ${n>1?'dias':'dia'}</span>` : '<span class="chip c-neu">A vencer</span>';
 }
+// Impostos: estimativa do Simples Nacional (Anexo III ou V pelo Fator R) + INSS do pró-labore. É só uma previsão; o oficial é o do contador.
+let impMes = null;
+const SN = {
+  III: [[180000,.06,0],[360000,.112,9360],[720000,.135,17640],[1800000,.16,35640],[3600000,.21,125640],[4800000,.33,648000]],
+  V:   [[180000,.155,0],[360000,.18,4500],[720000,.195,9900],[1800000,.205,17100],[3600000,.23,62100],[4800000,.305,540000]]
+};
+const brutoMes = m => S.atend.filter(a=>a.data.startsWith(m)).reduce((s,a)=>s+a.valor,0);
+// Previsão do mês atual: até o dia 10, a média dos meses anteriores (o ritmo dos primeiros dias engana); depois, o ritmo do próprio mês.
+const projecao = m => {
+  const b = brutoMes(m); if(m!==MES) return b;
+  const d = +TODAY.slice(8), ant = [1,2,3].map(i=>brutoMes(addMes(m,-i))).filter(v=>v>0), media = ant.length ? ant.reduce((s,v)=>s+v,0)/ant.length : 0;
+  if(d < 10 && media) return Math.max(b, media);
+  return d ? b/d*ultimoDia(m) : b;
+};
+function rbt12De(m){
+  if(num(S.impostos.rbt12)>0) return {v:num(S.impostos.rbt12), estimado:false, informado:true};
+  const meses = [...Array(12)].map((_,i)=>addMes(m,-(i+1))), com = meses.filter(x=>brutoMes(x)>0);
+  if(com.length===12) return {v:meses.reduce((s,x)=>s+brutoMes(x),0), estimado:false};
+  // Poucos meses no sistema: média dos meses com movimento × 12 (sem nenhum, a projeção do próprio mês × 12)
+  const base = com.length ? com.reduce((s,x)=>s+brutoMes(x),0)/com.length : projecao(m);
+  return {v:base*12, estimado:true, meses:com.length};
+}
+const aliqSN = (anexo, rbt) => { const f = SN[anexo].find(x=>rbt<=x[0]) || SN[anexo][SN[anexo].length-1]; return rbt ? Math.max((rbt*f[1]-f[2])/rbt, 0) : SN[anexo][0][1]; };
+function impostoDe(m){
+  const I = S.impostos, bruto = brutoMes(m), r = rbt12De(m), folha = (num(I.prolabore)+num(I.outrosSal))*12;
+  const fatorR = r.v ? folha/r.v : 0, fixa = I.regime==='fixa', anexo = fixa ? '' : fatorR>=0.28 ? 'III' : 'V';
+  const aliq = fixa ? num(I.aliqFixa)/100 : aliqSN(anexo, r.v), inss = num(I.prolabore)*num(I.inss)/100;
+  return {m, bruto, prev: m===MES ? projecao(m) : bruto, rbt12:r, folha, fatorR, anexo, aliq, das:bruto*aliq, inss, total:bruto*aliq+inss};
+}
+const pctF = v => (v*100).toLocaleString('pt-BR',{maximumFractionDigits:2})+'%';
+V.impostos = () => {
+  const m = impMes || MES, x = impostoDe(m), I = S.impostos, atual = m===MES;
+  const mv = addMes(m,1), venc = mv+'-'+String(Math.min(+I.dia||20, ultimoDia(mv))).padStart(2,'0');
+  const dasPrev = x.prev*x.aliq;
+  let dica = '';
+  if(I.regime!=='fixa' && x.anexo==='V' && x.rbt12.v){
+    const minPL = Math.ceil((0.28*x.rbt12.v/12 - num(I.outrosSal))/10)*10, aIII = aliqSN('III', x.rbt12.v);
+    const economia = x.prev*(x.aliq - aIII) - (minPL - num(I.prolabore))*num(I.inss)/100;
+    dica = `<div class="card" style="margin-bottom:16px;border-color:var(--gold)"><h3>Dica para conversar com o contador</h3>
+      <p style="margin:0">Hoje o pró-labore (${brl(num(I.prolabore))}) é <b>${pctF(x.fatorR)}</b> do faturamento, abaixo de 28%, por isso a alíquota é a do <b>Anexo V</b> (${pctF(x.aliq)}).
+      Com pró-labore a partir de <b>${brl(minPL)}</b> por mês, o consultório passaria para o <b>Anexo III</b> (${pctF(aIII)}).${economia>0?` Pela estimativa, isso economizaria cerca de <b>${brl(economia)}</b> por mês, já descontando o INSS maior.`:''}</p>
+      <p class="note">Isso é só uma simulação. A decisão de mudar o pró-labore deve ser tomada com o contador.</p></div>`;
+  }
+  const hist = [...Array(6)].map((_,i)=>addMes(m,-i)).map(impostoDe).filter(h=>h.bruto>0 || h.m===m);
+  return `<h2>Impostos</h2><p class="lead">Quanto separar de imposto conforme o dinheiro entra. É uma <b>estimativa</b> para você se organizar: o valor oficial é sempre o do contador.</p>
+  <div class="daynav"><button class="btn sm ghost" data-imes="-1" aria-label="Mês anterior">‹</button><b>${capMes(mesTxt(m))}</b><button class="btn sm ghost" data-imes="1" aria-label="Próximo mês">›</button></div>
+  <div class="kpis">
+    <div class="kpi"><span>Faturamento bruto${atual?' até hoje':''}</span><b>${brl(x.bruto)}</b>${atual?`<small class="dl muted">previsão do mês: ${brl(x.prev)}</small>`:''}</div>
+    <div class="kpi"><span>Alíquota${x.anexo?' · Anexo '+x.anexo:''}</span><b>${pctF(x.aliq)}</b></div>
+    <div class="kpi"><span>Imposto (DAS)${atual?' até agora':''}</span><b class="neg">${brl(x.das)}</b>${atual?`<small class="dl muted">previsão do mês: ${brl(dasPrev)}</small>`:''}</div>
+    <div class="kpi"><span>INSS do pró-labore</span><b class="neg">${brl(x.inss)}</b></div>
+    <div class="kpi main"><span>Separar para impostos${atual?' (previsão)':''}</span><b>${brl(atual ? dasPrev + x.inss : x.total)}</b><small class="dl">vence ${fmtD(venc)}</small></div>
+  </div>
+  ${dica}
+  <div class="grid split">
+    <div class="card"><h3>Como foi calculado</h3>
+      <div class="campos">
+        <div><span class="rot">Regime</span><span class="val">${I.regime==='fixa'?'Alíquota fixa informada':'Simples Nacional (Fator R)'}</span></div>
+        <div><span class="rot">Faturamento dos últimos 12 meses</span><span class="val">${brl(x.rbt12.v)}${x.rbt12.estimado?`<br><small class="muted">estimado: média de ${x.rbt12.meses||'0'} ${x.rbt12.meses===1?'mês':'meses'} no sistema × 12</small>`:x.rbt12.informado?'<br><small class="muted">informado em Configuração do imposto</small>':''}</span></div>
+        ${I.regime==='fixa'?'':`<div><span class="rot">Folha dos últimos 12 meses</span><span class="val">${brl(x.folha)}<br><small class="muted">pró-labore + salários registrados × 12</small></span></div>
+        <div><span class="rot">Fator R</span><span class="val">${pctF(x.fatorR)} ${x.fatorR>=0.28?'(28% ou mais → Anexo III)':'(abaixo de 28% → Anexo V)'}</span></div>`}
+        <div><span class="rot">Alíquota efetiva</span><span class="val">${pctF(x.aliq)} sobre o faturamento bruto</span></div>
+        <div><span class="rot">Guia deste mês</span><span class="val">vence ${fmtD(venc)} (DAS + INSS)</span></div>
+      </div>
+      <p class="note">O faturamento é o valor bruto dos atendimentos, antes da taxa da maquineta. Quando o sistema tiver 12 meses de movimento, o cálculo usa os números reais; até lá, você pode informar o faturamento dos últimos 12 meses que o contador passar.</p>
+    </div>
+    <form class="card" id="fImp" style="align-self:start"><h3>Configuração do imposto</h3>
+      <div class="row"><label>Regime<select id="imRegime"><option value="simples" ${I.regime!=='fixa'?'selected':''}>Simples Nacional (Fator R)</option><option value="fixa" ${I.regime==='fixa'?'selected':''}>Alíquota fixa</option></select></label></div>
+      <div class="row"><label>Pró-labore por mês (R$)<input id="imPL" type="number" min="0" step="0.01" value="${num(I.prolabore)}"></label><label>Outros salários registrados (R$/mês)<input id="imSal" type="number" min="0" step="0.01" value="${num(I.outrosSal)}"></label></div>
+      <div class="row"><label>Faturamento dos últimos 12 meses (R$)<input id="imRbt" type="number" min="0" step="0.01" value="${num(I.rbt12)||''}" placeholder="vazio = o sistema estima"></label></div>
+      <div class="row"><label>Alíquota fixa (%)<input id="imFixa" type="number" min="0" step="0.01" value="${num(I.aliqFixa)}"></label><label>INSS do pró-labore (%)<input id="imInss" type="number" min="0" step="0.01" value="${num(I.inss)}"></label><label>Vence todo dia<input id="imDia" type="number" min="1" max="31" value="${+I.dia||20}"></label></div>
+      <button class="btn" type="submit">Salvar</button>
+      <p class="note">A alíquota fixa só vale se o regime for "Alíquota fixa".</p>
+    </form>
+  </div>
+  <div class="card mt"><h3>Mês a mês</h3>${hist.length?`<div class="tbl-wrap"><table class="resp"><thead><tr><th>Mês</th><th class="r">Faturamento</th><th class="r">Alíquota</th><th class="r">DAS</th><th class="r">INSS</th><th class="r">Total</th></tr></thead><tbody>
+    ${hist.map(h=>`<tr><td class="full"><b>${capMes(mesTxt(h.m))}</b>${h.m===MES?' <small class="muted">· até hoje</small>':''}</td><td class="r num" data-label="Faturamento">${brl(h.bruto)}</td><td class="r num" data-label="Alíquota">${pctF(h.aliq)}${h.anexo?` <small class="muted">${h.anexo}</small>`:''}</td><td class="r num" data-label="DAS">${brl(h.das)}</td><td class="r num" data-label="INSS">${brl(h.inss)}</td><td class="r num" data-label="Total"><b>${brl(h.total)}</b></td></tr>`).join('')}
+  </tbody></table></div>`:'<p class="empty">Sem faturamento lançado.</p>'}</div>`;
+};
+
 V.contas = () => {
   const m = contasMes || MES, todas = contasDoMes(m), lista = contasLocal ? todas.filter(x=>x.c.local===contasLocal) : todas;
-  const val = x => x.pg ? x.pg.valor : x.c.valor, soma = xs => xs.reduce((s,x)=>s+val(x),0);
+  const val = x => x.pg ? x.pg.valor : x.c.imposto ? impostoDe(addMes(m,-1)).total : x.c.valor, soma = xs => xs.reduce((s,x)=>s+val(x),0);
   const prev = soma(lista), pago = soma(lista.filter(x=>x.pg)), atras = lista.filter(x=>!x.pg && diasAte(x.venc)<0).length;
   const porLocal = l => { const xs = todas.filter(x=>x.c.local===l); return xs.length ? `${brl(soma(xs.filter(x=>x.pg)))} pagos de ${brl(soma(xs))}` : 'nenhuma conta'; };
   const ed = contaEdit && S.contas.find(c=>c.id===contaEdit);
-  const linha = x => { const c = x.c, aberta = contaPagar===c.id && !x.pg, sug = (c.varia && ultimoPago(c)) ? ultimoPago(c).valor : c.valor;
-    return `<tr><td class="num" data-label="Vence">${fmtD(x.venc).slice(0,5)}</td><td class="full"><b>${esc(c.nome)}</b> <span class="chip ${c.local==='Casa'?'c-warn':'c-neu'}">${c.local}</span>${c.varia?'<br><small class="muted">valor varia todo mês</small>':''}${x.pg&&x.pg.forma?`<br><small class="muted">${esc(x.pg.forma)}</small>`:''}</td><td class="r num" data-label="Valor">${x.pg ? brl(x.pg.valor) : (c.varia?'~ ':'') + brl(c.valor)}</td><td data-label="Situação">${contaChip(x)}</td><td class="acao" style="white-space:nowrap">${x.pg ? `<button class="x" data-del="despesas:${x.pg.id}" aria-label="Desfazer pagamento" title="Desfazer pagamento">✕</button>` : aberta ? '' : `<button class="btn sm wa" data-pagarconta="${c.id}">Pagar</button>`}</td></tr>
+  const linha = x => { const c = x.c, aberta = contaPagar===c.id && !x.pg, estImp = c.imposto ? impostoDe(addMes(m,-1)).total : null;
+    const prev = estImp!==null ? Math.round(estImp*100)/100 : c.valor, sug = estImp!==null ? prev : (c.varia && ultimoPago(c)) ? ultimoPago(c).valor : c.valor;
+    return `<tr><td class="num" data-label="Vence">${fmtD(x.venc).slice(0,5)}</td><td class="full"><b>${esc(c.nome)}</b> <span class="chip ${c.local==='Casa'?'c-warn':'c-neu'}">${c.local}</span>${c.imposto?`<br><small class="muted">estimativa da guia de ${mesTxt(addMes(m,-1))} (aba Impostos)</small>`:c.varia?'<br><small class="muted">valor varia todo mês</small>':''}${x.pg&&x.pg.forma?`<br><small class="muted">${esc(x.pg.forma)}</small>`:''}</td><td class="r num" data-label="Valor">${x.pg ? brl(x.pg.valor) : (c.varia||c.imposto?'~ ':'') + brl(prev)}</td><td data-label="Situação">${contaChip(x)}</td><td class="acao" style="white-space:nowrap">${x.pg ? `<button class="x" data-del="despesas:${x.pg.id}" aria-label="Desfazer pagamento" title="Desfazer pagamento">✕</button>` : aberta ? '' : `<button class="btn sm wa" data-pagarconta="${c.id}">Pagar</button>`}</td></tr>
     ${aberta ? `<tr class="pagar-row"><td colspan="5" class="full"><form id="fPagarConta" data-conta="${c.id}" data-mes="${m}"><div class="row"><label>Valor pago (R$)<input id="pgValor" type="number" min="0" step="0.01" required value="${sug}"></label><label>Data do pagamento<input id="pgData" type="date" required value="${TODAY}"></label><label>Forma<select id="pgForma">${DFORMAS.map(f=>`<option ${f===(c.forma||'Pix')?'selected':''}>${f}</option>`).join('')}</select></label></div><div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn" type="submit">Confirmar pagamento</button><button class="btn ghost" type="button" data-cancelpag="1">Cancelar</button></div></form></td></tr>` : ''}`; };
   return `<h2>Contas a pagar</h2><p class="lead">Os compromissos de todo mês, da casa e do consultório. Toque em Pagar no dia do pagamento e confira o valor: as contas pagas entram nas Despesas e no Fluxo de caixa.</p>
-  <div class="daynav"><button class="btn sm ghost" data-cmes="-1" aria-label="Mês anterior">‹</button><b style="text-transform:capitalize">${mesTxt(m)}</b><button class="btn sm ghost" data-cmes="1" aria-label="Próximo mês">›</button></div>
+  <div class="daynav"><button class="btn sm ghost" data-cmes="-1" aria-label="Mês anterior">‹</button><b>${capMes(mesTxt(m))}</b><button class="btn sm ghost" data-cmes="1" aria-label="Próximo mês">›</button></div>
   <div class="seg" role="group" aria-label="Mostrar contas" style="margin-bottom:14px">${[['','Todas'],['Consultório','Consultório'],['Casa','Casa']].map(([v,l])=>`<button type="button" data-clocal="${v}" aria-pressed="${contasLocal===v}">${l}</button>`).join('')}</div>
   <div class="kpis">
     <div class="kpi"><span>Total do mês</span><b>${brl(prev)}</b></div>
@@ -632,7 +715,7 @@ V.despesas = () => {
   const colabs = S.colabs.map(c=>{ const ds = todas.filter(d=>d.colab===c.id); return {c, tot:soma(ds), pago:soma(ds.filter(d=>d.pago))}; });
   const optF = [['','Todas'],['apagar','Só a pagar'], ...DCAT.map(c=>[c,c]), ...S.colabs.map(c=>['c:'+c.id, c.nome])];
   return `<h2>Despesas</h2><p class="lead">Todas as saídas do consultório, inclusive o pagamento dos colaboradores. Elas também entram no Fluxo de caixa e no Dashboard.</p>
-  <div class="daynav"><button class="btn sm ghost" data-dmes="-1" aria-label="Mês anterior">‹</button><b style="text-transform:capitalize">${mesTxt(m)}</b><button class="btn sm ghost" data-dmes="1" aria-label="Próximo mês">›</button></div>
+  <div class="daynav"><button class="btn sm ghost" data-dmes="-1" aria-label="Mês anterior">‹</button><b>${capMes(mesTxt(m))}</b><button class="btn sm ghost" data-dmes="1" aria-label="Próximo mês">›</button></div>
   <div class="kpis">
     <div class="kpi"><span>Total do mês</span><b>${brl(tot)}</b></div>
     <div class="kpi"><span>Pago</span><b class="pos">${brl(pago)}</b></div>
@@ -978,7 +1061,7 @@ function falha(e){
 function assinar(){
   const marcar = k => { const antes = carregados.size; carregados.add(k); if(antes<NCARGA && carregados.size===NCARGA){ mostrar('app'); render(); } else atualizar(); };
   unsubs.push(onSnapshot(doc(db,'config','geral'), s => {
-    if(s.exists()){ const c = s.data(); S.profs = c.profs?.length ? c.profs : DEF.profs; S.procs = Array.isArray(c.procs) ? c.procs : DEF.procs; S.taxas = {...DEF.taxas, ...c.taxas}; S.colabs = Array.isArray(c.colabs) ? c.colabs : []; }
+    if(s.exists()){ const c = s.data(); S.profs = c.profs?.length ? c.profs : DEF.profs; S.procs = Array.isArray(c.procs) ? c.procs : DEF.procs; S.taxas = {...DEF.taxas, ...c.taxas}; S.colabs = Array.isArray(c.colabs) ? c.colabs : []; S.impostos = {...DEF_IMP, ...(c.impostos||{})}; }
     else if(!cfgCriada && !s.metadata.fromCache){ cfgCriada = true; saveConfig(); }
     marcar('config');
   }, falha));
@@ -1005,7 +1088,7 @@ document.addEventListener('click', e => {
   if(esc_){ const campo = document.getElementById(esc_.dataset.campo); campo.value = esc_.dataset.escolher; esc_.parentElement.hidden = true;
     const alvo = campo.dataset.sug && document.getElementById(campo.dataset.sug); if(alvo && esc_.dataset.fone) alvo.value = esc_.dataset.fone; return; }
   if(!e.target.closest('.sug')) document.querySelectorAll('.sug-lista').forEach(l=>l.hidden = true);
-  const t = e.target.closest('[data-tab],[data-go],[data-day],[data-hoje],[data-atender],[data-sel],[data-sent],[data-st],[data-del],[data-delproc],[data-usar],[data-comprar],[data-abrirpac],[data-ficha],[data-voltarpac],[data-imprimir],[data-editpac],[data-plano],[data-delplano],[data-dmes],[data-dfiltro],[data-pagar],[data-delcolab],[data-cxvis],[data-cxdia],[data-cxnav],[data-cxhoje],[data-avisar],[data-fecharaviso],[data-parabens],[data-cmes],[data-clocal],[data-pagarconta],[data-cancelpag],[data-editconta],[data-cancelconta],[data-desativar],#addProc,#backup,#sair,#sair2,#sair3,#esqueci,#trocarSenha');
+  const t = e.target.closest('[data-tab],[data-go],[data-day],[data-hoje],[data-atender],[data-sel],[data-sent],[data-st],[data-del],[data-delproc],[data-usar],[data-comprar],[data-abrirpac],[data-ficha],[data-voltarpac],[data-imprimir],[data-editpac],[data-plano],[data-delplano],[data-dmes],[data-dfiltro],[data-pagar],[data-delcolab],[data-cxvis],[data-cxdia],[data-cxnav],[data-cxhoje],[data-avisar],[data-fecharaviso],[data-parabens],[data-cmes],[data-imes],[data-clocal],[data-pagarconta],[data-cancelpag],[data-editconta],[data-cancelconta],[data-desativar],#addProc,#backup,#sair,#sair2,#sair3,#esqueci,#trocarSenha');
   if(!t) return;
   if(['sair','sair2','sair3'].includes(t.id)) return signOut(auth);
   if(t.id==='esqueci'){
@@ -1024,6 +1107,7 @@ document.addEventListener('click', e => {
   if('editpac' in t.dataset){ pacEdit = t.dataset.editpac || null; return render(); }
   if(t.dataset.plano){ const p = S.pac.find(x=>x.id===pacSel); if(!p) return;
     put('pacientes', {...p, plano:p.plano.map(it=>it.id===t.dataset.plano?{...it, feito:!it.feito, feitoEm:!it.feito?TODAY:''}:it)}); return render(); }
+  if(t.dataset.imes){ impMes = addMes(impMes || MES, +t.dataset.imes); return render(); }
   if(t.dataset.cmes){ contasMes = addMes(contasMes || MES, +t.dataset.cmes); contaPagar = null; return render(); }
   if('clocal' in t.dataset){ contasLocal = t.dataset.clocal; return render(); }
   if(t.dataset.pagarconta){ contaPagar = t.dataset.pagarconta; render(); const v = document.getElementById('pgValor'); if(v){ v.focus(); v.select(); } return; }
@@ -1153,6 +1237,8 @@ document.addEventListener('submit', e => {
     put('despesas', {id:novoId(), data, desc:$('dpDesc').trim(), valor:parseFloat($('dpValor'))||0, cat:$('dpCat'), tipo:$('dpTipo'), colab:$('dpColab'), forma:$('dpForma'),
       paciente: pac ? pac.nome : pacNome, pacienteId: pac ? pac.id : '', mensal, pagoEm: pago ? TODAY : '', ...(mensal ? {pagos: pago ? [data.slice(0,7)] : []} : {pago})});
     despMes = data.slice(0,7); render(); return toast(mensal ? 'Despesa lançada para todos os meses' : 'Despesa lançada'); }
+  if(id==='fImp'){ S.impostos = {...S.impostos, regime:$('imRegime'), prolabore:parseFloat($('imPL'))||0, outrosSal:parseFloat($('imSal'))||0, rbt12:parseFloat($('imRbt'))||0, aliqFixa:parseFloat($('imFixa'))||0, inss:parseFloat($('imInss'))||0, dia:Math.min(Math.max(parseInt($('imDia'))||20,1),31)};
+    saveConfig(); render(); return toast('Configuração do imposto salva'); }
   if(id==='fConta'){ const base = contaEdit && S.contas.find(c=>c.id===contaEdit);
     const dados = {nome:$('ctNome').trim(), local:$('ctLocal'), dia:Math.min(Math.max(parseInt($('ctDia'))||1,1),31), valor:parseFloat($('ctValor'))||0, cat:$('ctCat'), varia:document.getElementById('ctVaria').checked};
     put('contas', base ? {...base, ...dados} : {id:novoId(), ...dados, ativa:true, desde:contasMes||MES, criadoEm:TODAY});

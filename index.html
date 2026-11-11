@@ -265,7 +265,7 @@ let db;
 try { db = initializeFirestore(fb, {localCache: persistentLocalCache({tabManager: persistentMultipleTabManager()})}); }
 catch(e){ db = initializeFirestore(fb, {}); }
 
-const VERSAO = '07/11/2026 · 11'; // aumentar a cada envio ao GitHub, para conferir se o celular pegou a atualização
+const VERSAO = '11/11/2026 · 12'; // aumentar a cada envio ao GitHub, para conferir se o celular pegou a atualização
 const FORMAS = ['Pix','Dinheiro','Débito','Crédito à vista','Crédito parcelado'];
 const TABS = [['inicio','Início'],['dash','Dashboard'],['agenda','Agenda'],['pacientes','Pacientes'],['confirm','Confirmações'],['aniver','Aniversários'],['atend','Atendimentos'],['caixa','Fluxo de caixa'],['despesas','Despesas'],['contas','Contas a pagar'],['impostos','Impostos'],['estoque','Estoque'],['rel','Relatórios'],['config','Configurações']];
 const brl = v => (v||0).toLocaleString('pt-BR',{style:'currency',currency:'BRL'});
@@ -322,7 +322,7 @@ function put(col, o){
   setDoc(doc(db,col,o.id), corpo(o)).catch(erro);
 }
 function del(col, id){ S[COLS[col]] = S[COLS[col]].filter(x=>x.id!==id); deleteDoc(doc(db,col,id)).catch(erro); }
-function saveConfig(){ setDoc(doc(db,'config','geral'), {profs:S.profs, procs:S.procs, taxas:S.taxas, colabs:S.colabs, impostos:S.impostos}).catch(erro); }
+function saveConfig(){ setDoc(doc(db,'config','geral'), {profs:S.profs, procs:S.procs, taxas:S.taxas, colabs:S.colabs, impostos:S.impostos, caixaIni:S.caixaIni||{}}).catch(erro); }
 
 const profNome = id => (S.profs.find(p=>p.id===id)||{}).nome || '—';
 const profCurto = id => profNome(id).replace(/\s*\(.*\)/,'');
@@ -756,8 +756,19 @@ function diaCaixa(d){
   const fixa = de.filter(x=>x.tipo==='Fixa').reduce((s,x)=>s+x.valor,0), vari = de.filter(x=>x.tipo!=='Fixa').reduce((s,x)=>s+x.valor,0);
   return {d, at, de, bruto, liquido, taxas:bruto-liquido, fixa, vari, saida:fixa+vari, saldo:liquido-fixa-vari};
 }
+// Saldo que vem de antes do dia d: saldo inicial do caixa (se houver) + tudo o que entrou e saiu nos dias anteriores, de todos os meses.
+function saldoAntes(d){
+  const ini = S.caixaIni || {}, iniOk = dataOk(ini.data) && ini.data <= d, de0 = iniOk ? ini.data : '';
+  let s = iniOk ? num(ini.valor) : 0;
+  s += S.atend.filter(a=>a.data<d && a.data>=de0).reduce((t,a)=>t+liq(a),0);
+  const datas = [...S.atend.map(a=>a.data), ...S.desp.map(x=>x.data)].filter(dataOk).sort();
+  if(!datas.length) return s;
+  for(let m = (de0 && de0>datas[0] ? de0 : datas[0]).slice(0,7), fim = d.slice(0,7); m<=fim; m = addMes(m,1))
+    s -= despDoMes(m).filter(x=>x.data.startsWith(m) && x.data<d && x.data>=de0).reduce((t,x)=>t+x.valor,0);
+  return s;
+}
 function diasDoMes(m){
-  let acum = 0;
+  let acum = saldoAntes(m+'-01');
   return [...Array(ultimoDia(m))].map((_,i)=>{ const x = diaCaixa(m+'-'+String(i+1).padStart(2,'0')); acum += x.saldo; return {...x, acum, mov: x.at.length + x.de.length}; });
 }
 const brlCurto = v => { const a = Math.abs(v), s = v<0?'−':''; return a>=1000 ? `${s}${(a/1000).toLocaleString('pt-BR',{maximumFractionDigits:1})} mil` : `${s}${Math.round(a)}`; };
@@ -781,7 +792,7 @@ const horaDe = a => a.hora || (S.agenda.find(g => g.data===a.data && (a.paciente
 V.caixa = () => caixaVis==='dia' ? caixaVerDia() : caixaVerMes();
 
 function caixaVerDia(){
-  const d = caixaDia || TODAY, x = diaCaixa(d);
+  const d = caixaDia || TODAY, x = diaCaixa(d), ant = saldoAntes(d), fim = ant + x.saldo;
   const mov = [...x.at.map(a=>({hora:horaDe(a), desc:a.paciente+' · '+a.proc, sub:a.forma+(a.parc>1?' '+a.parc+'x':'')+(a.taxa?' · taxa '+pct(a.taxa):''), tipo:'Entrada', claude:a.origem==='claude', v:liq(a), del:'atendimentos:'+a.id})),
     ...x.de.map(e=>({hora:'', desc:e.desc+(e.mensal?' · todo mês':''), sub:[catDe(e), e.pago?'pago':'a pagar'].join(' · '), tipo:e.tipo, claude:e.origem==='claude', v:-e.valor, del:'despesas:'+e.id}))]
     .sort((a,b)=>(a.hora||'99').localeCompare(b.hora||'99'));
@@ -789,11 +800,13 @@ function caixaVerDia(){
   <div class="daynav"><button class="btn sm ghost" data-cxnav="-1" aria-label="Dia anterior">‹</button><b>${diaSem(d)}, ${fmtD(d)}${d===TODAY?' · hoje':''}</b><button class="btn sm ghost" data-cxnav="1" aria-label="Próximo dia">›</button></div>
   ${d!==TODAY?'<button class="btn sm ghost" data-cxhoje="1" style="margin-bottom:12px">Hoje</button>':''}
   <div class="kpis">
+    <div class="kpi"><span>Veio do dia anterior</span><b class="${ant<0?'neg':''}">${brl(ant)}</b></div>
     <div class="kpi"><span>Entradas brutas</span><b>${brl(x.bruto)}</b></div>
     <div class="kpi"><span>Taxas da maquineta</span><b class="neg">− ${brl(x.taxas)}</b></div>
     <div class="kpi"><span>Entradas líquidas</span><b class="pos">${brl(x.liquido)}</b></div>
     <div class="kpi"><span>Saídas</span><b class="neg">− ${brl(x.saida)}</b><small class="dl muted">fixas ${brl(x.fixa)} · variáveis ${brl(x.vari)}</small></div>
-    <div class="kpi main"><span>Saldo do dia</span><b>${brl(x.saldo)}</b></div>
+    <div class="kpi"><span>Resultado do dia</span><b class="${x.saldo<0?'neg':'pos'}">${brl(x.saldo)}</b></div>
+    <div class="kpi main"><span>Saldo no fim do dia</span><b>${brl(fim)}</b><small class="dl">passa para o dia seguinte</small></div>
   </div>
   <div class="card"><h3>Movimentações do dia · ${mov.length}</h3>${mov.length?`<div class="tbl-wrap"><table class="resp"><thead><tr><th>Hora</th><th>Descrição</th><th>Tipo</th><th class="r">Valor</th><th></th></tr></thead><tbody>
     ${mov.map(m=>`<tr><td class="num" data-label="Hora">${m.hora||'—'}</td><td class="full"><b>${esc(m.desc)}</b><br><small class="muted">${esc(m.sub)}</small></td><td data-label="Tipo">${m.claude?'<span class="chip c-claude">via Claude</span> ':''}<span class="chip ${m.tipo==='Entrada'?'c-ok':m.tipo==='Fixa'?'c-neu':'c-warn'}">${m.tipo}</span></td><td class="r num ${m.v<0?'neg':''}" data-label="Valor">${brl(m.v)}</td><td class="acao"><button class="x" data-del="${m.del}" aria-label="Excluir lançamento" title="Excluir">✕</button></td></tr>`).join('')}
@@ -802,14 +815,16 @@ function caixaVerDia(){
 }
 
 function caixaVerMes(){
-  const r = resumo(), dias = diasDoMes(MES), comMov = dias.filter(x=>x.mov);
+  const r = resumo(), dias = diasDoMes(MES), comMov = dias.filter(x=>x.mov), antMes = saldoAntes(MES+'-01'), ini = S.caixaIni || {};
   const mov = [...r.at.map(a=>({data:a.data,desc:a.paciente+' · '+a.proc,tipo:'Entrada',claude:a.origem==='claude',v:liq(a),del:'atendimentos:'+a.id})), ...r.de.map(d=>({data:d.data,desc:d.desc+(d.mensal?' · todo mês':''),claude:d.origem==='claude',tipo:d.tipo,v:-d.valor,del:'despesas:'+d.id}))].sort((a,b)=>b.data.localeCompare(a.data));
   return `<div class="cx-topo"><h2>Fluxo de caixa · ${mesNome()}</h2>${segCaixa()}</div><p class="lead">As entradas vêm sozinhas dos atendimentos, já sem a taxa. Aqui você lança só as saídas.</p>
   <div class="kpis">
+    <div class="kpi"><span>Veio do mês anterior</span><b class="${antMes<0?'neg':''}">${brl(antMes)}</b></div>
     <div class="kpi"><span>Entradas líquidas</span><b class="pos">${brl(r.liquido)}</b></div>
     <div class="kpi"><span>Despesas fixas</span><b class="neg">− ${brl(r.fixa)}</b></div>
     <div class="kpi"><span>Despesas variáveis</span><b class="neg">− ${brl(r.vari)}</b></div>
-    <div class="kpi main"><span>Saldo</span><b>${brl(r.saldo)}</b></div>
+    <div class="kpi"><span>Resultado do mês</span><b class="${r.saldo<0?'neg':'pos'}">${brl(r.saldo)}</b></div>
+    <div class="kpi main"><span>Saldo acumulado</span><b>${brl(antMes + r.saldo)}</b><small class="dl">passa para o próximo mês</small></div>
   </div>
   <div class="card" style="margin-bottom:16px"><h3>Saldo de cada dia</h3>
     <div class="legend"><span><i style="background:var(--ok)"></i>Positivo</span><span><i style="background:var(--bad)"></i>Negativo</span><span class="muted">Toque numa barra para abrir o dia</span></div>
@@ -818,7 +833,12 @@ function caixaVerMes(){
   <div class="card" style="margin-bottom:16px"><h3>Dia a dia · ${comMov.length} ${comMov.length===1?'dia':'dias'} com movimento</h3>${comMov.length?`<div class="tbl-wrap"><table class="resp cx-dias"><thead><tr><th>Data</th><th class="r">Entradas líquidas</th><th class="r">Saídas</th><th class="r">Saldo do dia</th><th class="r">Acumulado</th></tr></thead><tbody>
     ${comMov.map(x=>`<tr data-cxdia="${x.d}" tabindex="0" title="Abrir este dia"><td class="full"><b>${fmtD(x.d).slice(0,5)}</b> <small class="muted">${diaSem(x.d)}</small></td><td class="r num pos" data-label="Entradas líquidas">${brl(x.liquido)}</td><td class="r num ${x.saida?'neg':''}" data-label="Saídas">${x.saida?'− '+brl(x.saida):brl(0)}</td><td class="r num ${x.saldo<0?'neg':''}" data-label="Saldo do dia"><b>${brl(x.saldo)}</b></td><td class="r num ${x.acum<0?'neg':''}" data-label="Acumulado">${brl(x.acum)}</td></tr>`).join('')}
   </tbody></table></div>`:'<p class="empty">Nenhum dia com movimento neste mês.</p>'}
-    <p class="note">Toque num dia para ver as movimentações dele.</p></div>
+    <p class="note">O acumulado começa com ${brl(antMes)} que vieram de antes e soma o resultado de cada dia. Toque num dia para ver as movimentações dele.</p></div>
+  <form class="card" id="fCxIni" style="margin-bottom:16px"><h3>Saldo inicial do caixa</h3>
+    <p class="note" style="margin:-4px 0 10px">Quanto havia em caixa antes de começar a lançar no sistema. Ele entra no acumulado a partir da data escolhida.</p>
+    <div class="row"><label>A partir do dia<input id="ciData" type="date" value="${esc(ini.data||'')}"></label><label>Valor (R$; negativo se estava devendo)<input id="ciValor" type="number" step="0.01" value="${ini.valor!==undefined?num(ini.valor):''}" placeholder="0,00"></label></div>
+    <button class="btn ghost" type="submit">Salvar saldo inicial</button>
+  </form>
   <div class="grid split">
     <div class="card"><h3>Movimentações</h3>${mov.length?`<div class="tbl-wrap"><table class="resp"><thead><tr><th>Data</th><th>Descrição</th><th>Tipo</th><th class="r">Valor</th><th></th></tr></thead><tbody>
       ${mov.map(m=>`<tr><td class="num" data-label="Data">${fmtD(m.data).slice(0,5)}</td><td class="full"><b>${esc(m.desc)}</b></td><td data-label="Tipo">${m.claude?'<span class="chip c-claude">via Claude</span> ':''}<span class="chip ${m.tipo==='Entrada'?'c-ok':m.tipo==='Fixa'?'c-neu':'c-warn'}">${m.tipo}</span></td><td class="r num ${m.v<0?'neg':''}" data-label="Valor">${brl(m.v)}</td><td class="acao"><button class="x" data-del="${m.del}" aria-label="Excluir lançamento" title="Excluir">✕</button></td></tr>`).join('')}
@@ -1061,7 +1081,7 @@ function falha(e){
 function assinar(){
   const marcar = k => { const antes = carregados.size; carregados.add(k); if(antes<NCARGA && carregados.size===NCARGA){ mostrar('app'); render(); } else atualizar(); };
   unsubs.push(onSnapshot(doc(db,'config','geral'), s => {
-    if(s.exists()){ const c = s.data(); S.profs = c.profs?.length ? c.profs : DEF.profs; S.procs = Array.isArray(c.procs) ? c.procs : DEF.procs; S.taxas = {...DEF.taxas, ...c.taxas}; S.colabs = Array.isArray(c.colabs) ? c.colabs : []; S.impostos = {...DEF_IMP, ...(c.impostos||{})}; }
+    if(s.exists()){ const c = s.data(); S.profs = c.profs?.length ? c.profs : DEF.profs; S.procs = Array.isArray(c.procs) ? c.procs : DEF.procs; S.taxas = {...DEF.taxas, ...c.taxas}; S.colabs = Array.isArray(c.colabs) ? c.colabs : []; S.impostos = {...DEF_IMP, ...(c.impostos||{})}; S.caixaIni = c.caixaIni || {}; }
     else if(!cfgCriada && !s.metadata.fromCache){ cfgCriada = true; saveConfig(); }
     marcar('config');
   }, falha));
@@ -1237,6 +1257,7 @@ document.addEventListener('submit', e => {
     put('despesas', {id:novoId(), data, desc:$('dpDesc').trim(), valor:parseFloat($('dpValor'))||0, cat:$('dpCat'), tipo:$('dpTipo'), colab:$('dpColab'), forma:$('dpForma'),
       paciente: pac ? pac.nome : pacNome, pacienteId: pac ? pac.id : '', mensal, pagoEm: pago ? TODAY : '', ...(mensal ? {pagos: pago ? [data.slice(0,7)] : []} : {pago})});
     despMes = data.slice(0,7); render(); return toast(mensal ? 'Despesa lançada para todos os meses' : 'Despesa lançada'); }
+  if(id==='fCxIni'){ S.caixaIni = dataOk($('ciData')) ? {data:$('ciData'), valor:parseFloat($('ciValor'))||0} : {}; saveConfig(); render(); return toast(S.caixaIni.data ? 'Saldo inicial salvo' : 'Saldo inicial removido'); }
   if(id==='fImp'){ S.impostos = {...S.impostos, regime:$('imRegime'), prolabore:parseFloat($('imPL'))||0, outrosSal:parseFloat($('imSal'))||0, rbt12:parseFloat($('imRbt'))||0, aliqFixa:parseFloat($('imFixa'))||0, inss:parseFloat($('imInss'))||0, dia:Math.min(Math.max(parseInt($('imDia'))||20,1),31)};
     saveConfig(); render(); return toast('Configuração do imposto salva'); }
   if(id==='fConta'){ const base = contaEdit && S.contas.find(c=>c.id===contaEdit);

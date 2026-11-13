@@ -69,6 +69,9 @@ h3{font-size:.78rem;letter-spacing:.14em;text-transform:uppercase;color:var(--mu
 form .row{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-bottom:12px}
 label{display:flex;flex-direction:column;gap:4px;font-size:.8rem;font-weight:600;color:var(--muted)}
 input,select,textarea{font:inherit;font-size:.95rem;color:var(--ink);background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:9px 10px;width:100%}
+form .row > label{min-width:0}
+input[type=date],input[type=time]{min-width:0;max-width:100%;-webkit-appearance:none;appearance:none;min-height:42px}
+input.mai{text-transform:uppercase}
 textarea{min-height:90px;resize:vertical}
 input:focus,select:focus,button:focus-visible,a:focus-visible{outline:2px solid var(--plum);outline-offset:1px}
 .btn{font:inherit;font-weight:600;border-radius:8px;padding:10px 16px;cursor:pointer;border:1px solid var(--plum);background:var(--plum);color:var(--plum-ink);text-decoration:none;display:inline-flex;align-items:center;gap:6px;justify-content:center}
@@ -268,7 +271,7 @@ let db;
 try { db = initializeFirestore(fb, {localCache: persistentLocalCache({tabManager: persistentMultipleTabManager()})}); }
 catch(e){ db = initializeFirestore(fb, {}); }
 
-const VERSAO = '13/11/2026 · 14'; // aumentar a cada envio ao GitHub, para conferir se o celular pegou a atualização
+const VERSAO = '13/11/2026 · 15'; // aumentar a cada envio ao GitHub, para conferir se o celular pegou a atualização
 const FORMAS = ['Pix','Dinheiro','Débito','Crédito à vista','Crédito parcelado'];
 const TABS = [['inicio','Início'],['dash','Dashboard'],['agenda','Agenda'],['pacientes','Pacientes'],['confirm','Confirmações'],['aniver','Aniversários'],['atend','Atendimentos'],['caixa','Fluxo de caixa'],['despesas','Despesas'],['contas','Contas a pagar'],['impostos','Impostos'],['estoque','Estoque'],['rel','Relatórios'],['config','Configurações']];
 const brl = v => (v||0).toLocaleString('pt-BR',{style:'currency',currency:'BRL'});
@@ -496,7 +499,7 @@ V.agenda = () => {
       <div class="seg" role="group" aria-label="Tipo de agendamento" style="margin-bottom:12px"><button type="button" data-agmodo="paciente" aria-pressed="${!comp}">Paciente</button><button type="button" data-agmodo="compromisso" aria-pressed="${comp}">Compromisso</button></div>
       ${comp ? `<p class="note" style="margin:0 0 10px">Para a sua agenda pessoal: consulta, exame, reunião… Não envia mensagem e não entra nas confirmações.</p>
       <div class="row"><label>O que é<input id="agTit" required autocomplete="off" placeholder="Ex.: Pediatra do bebê, exame de vista"></label></div>` : `
-      <div class="row"><label class="sug">Paciente<input id="agPac" required autocomplete="off" placeholder="Digite o nome" data-sug="agFone"><div class="sug-lista" id="sug-agPac" hidden></div></label></div>
+      <div class="row"><label class="sug">Paciente<input id="agPac" class="mai" required autocomplete="off" placeholder="Digite o nome" data-sug="agFone"><div class="sug-lista" id="sug-agPac" hidden></div></label></div>
       <div class="row"><label>WhatsApp do paciente<input id="agFone" inputmode="tel" placeholder="(88) 99999-0000"></label></div>`}
       <div class="row"><label>Data<input id="agData" type="date" required value="${agDay}"></label></div>
       <div class="row"><label>Das<input id="agHora" type="time" required value="08:00" data-old="08:00"></label><label>Até<input id="agFim" type="time" required value="09:00"></label></div>
@@ -566,7 +569,7 @@ V.atend = () => {
   return `<h2>Atendimentos</h2><p class="lead">Registre cada atendimento. Escolhendo cartão, a taxa da maquineta é descontada automaticamente e o valor líquido vai para o caixa.</p>
   <div class="grid split">
     <form class="card" id="fAt" style="align-self:start"><h3>Registrar atendimento</h3>
-      <div class="row"><label class="sug">Paciente<input id="atPac" required autocomplete="off" value="${esc(p.paciente||'')}" placeholder="Digite o nome" data-sug=""><div class="sug-lista" id="sug-atPac" hidden></div></label><label>Data<input id="atData" type="date" required value="${p.data||TODAY}"></label></div>
+      <div class="row"><label class="sug">Paciente<input id="atPac" class="mai" required autocomplete="off" value="${esc(p.paciente||'')}" placeholder="Digite o nome" data-sug=""><div class="sug-lista" id="sug-atPac" hidden></div></label><label>Data<input id="atData" type="date" required value="${p.data||TODAY}"></label></div>
       <div class="row"><label>Profissional<select id="atProf">${S.profs.map(x=>`<option value="${x.id}" ${x.id===p.prof?'selected':''}>${esc(x.nome)}</option>`).join('')}</select></label>
         <label>Tipo de atendimento<select id="atTipo"><option>Particular</option><option>Retorno</option><option>Convênio</option><option>Urgência</option></select></label></div>
       <div class="row"><label>Procedimento<select id="atProc">${S.procs.map(x=>`<option ${x.nome===procSel?'selected':''}>${esc(x.nome)}</option>`).join('')}</select></label><label>Valor (R$)<input id="atValor" type="number" min="0" step="0.01" required value="${valor}"></label></div>
@@ -945,10 +948,13 @@ const dePac = p => x => x.pacienteId ? x.pacienteId===p.id : normN(x.paciente)==
 const fmtFone = f => { const d = String(f||'').replace(/\D/g,''); return d.length===11 ? `(${d.slice(0,2)}) ${d.slice(2,7)}-${d.slice(7)}` : d.length===10 ? `(${d.slice(0,2)}) ${d.slice(2,6)}-${d.slice(6)}` : d; };
 const idade = n => { if(!dataOk(n)) return ''; const h = new Date(TODAY+'T12:00'), d = new Date(n+'T12:00'); let a = h.getFullYear()-d.getFullYear(); if(h < new Date(h.getFullYear(), d.getMonth(), d.getDate(), 12)) a--; return a+' anos'; };
 const ultimaVisita = p => [...S.evo, ...S.atend].filter(dePac(p)).map(x=>x.data).filter(d=>d<=TODAY).sort().pop() || '';
-function garantirPac(nome, fone){
+// Nomes de pacientes sempre em letras maiúsculas (pedido da cliente)
+const maiusc = s => String(s||'').trim().replace(/\s+/g,' ').toLocaleUpperCase('pt-BR');
+const fmtCpf = s => { const d = String(s||'').replace(/\D/g,'').slice(0,11); return d.length===11 ? d.replace(/(\d{3})(\d{3})(\d{3})(\d{2})/,'$1.$2.$3-$4') : d; };
+function garantirPac(nome, fone, extra){
   const n = normN(nome); if(!n) return null;
   let p = S.pac.find(x=>normN(x.nome)===n);
-  if(!p){ p = {id:novoId(), nome:nome.trim(), fone:fone||'', nasc:'', cpf:'', endereco:'', anamnese:{}, plano:[], criadoEm:TODAY}; put('pacientes', p); }
+  if(!p){ p = {id:novoId(), nome:maiusc(nome), fone:fone||'', nasc:'', cpf:'', endereco:'', anamnese:{}, plano:[], criadoEm:TODAY, ...(extra||{})}; put('pacientes', p); }
   else if(fone && !p.fone) put('pacientes', {...p, fone});
   return p.id;
 }
@@ -964,8 +970,11 @@ function listaPac(){
       <div id="pacLista" class="mt">${linhas.length ? linhas.map(l=>`<button type="button" class="pac-row" ${l.attr} data-busca="${esc(normN(l.nome))}"><span><b>${esc(l.nome)}</b><small>${l.fone?esc(fmtFone(l.fone)):'sem WhatsApp'}${l.ultima?' · última visita '+fmtD(l.ultima):''}</small></span><span style="white-space:nowrap">${l.alerta?'<span class="chip c-bad">Alergia</span> ':''}${l.semFicha?'<span class="chip c-neu">sem ficha</span> ':''}›</span></button>`).join('') : '<p class="empty">Nenhum paciente ainda.</p>'}</div>
     </div>
     <form class="card" id="fPac" style="align-self:start"><h3>Novo paciente</h3>
-      <div class="row"><label>Nome completo<input id="npNome" required autocomplete="off"></label></div>
+      <div class="row"><label>Nome completo<input id="npNome" class="mai" required autocomplete="off"></label></div>
       <div class="row"><label>WhatsApp<input id="npFone" inputmode="tel" placeholder="(88) 99999-0000"></label><label>Nascimento<input id="npNasc" type="date"></label></div>
+      <div class="row"><label>CPF<input id="npCpf" inputmode="numeric" placeholder="000.000.000-00" autocomplete="off"></label></div>
+      <div class="row"><label>Endereço<input id="npEnd" placeholder="Rua, número, bairro, cidade" autocomplete="off"></label></div>
+      <p class="note" style="margin:-4px 0 10px">CPF e endereço são usados na nota fiscal.</p>
       <button class="btn" type="submit">Criar ficha</button>
     </form>
   </div>`;
@@ -985,9 +994,9 @@ function ficha(p){
   ${String(a.alergias||'').trim()?`<div class="alerta">⚠ Alergia: ${esc(a.alergias)}</div>`:''}
   <div class="grid g2">
     ${ed==='dados' ? `<form class="card" id="fDados"><h3>Dados do paciente</h3>
-      <div class="row"><label>Nome completo<input id="pdNome" required value="${esc(p.nome)}"></label></div>
+      <div class="row"><label>Nome completo<input id="pdNome" class="mai" required value="${esc(p.nome)}"></label></div>
       <div class="row"><label>WhatsApp<input id="pdFone" inputmode="tel" value="${esc(p.fone)}"></label><label>Nascimento<input id="pdNasc" type="date" value="${esc(p.nasc||'')}"></label></div>
-      <div class="row"><label>CPF<input id="pdCpf" inputmode="numeric" value="${esc(p.cpf||'')}"></label></div>
+      <div class="row"><label>CPF<input id="pdCpf" inputmode="numeric" placeholder="000.000.000-00" value="${esc(p.cpf||'')}"></label></div>
       <div class="row"><label>Endereço<input id="pdEnd" value="${esc(p.endereco||'')}"></label></div>
       <div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn" type="submit">Salvar</button><button class="btn ghost" type="button" data-editpac="">Cancelar</button></div></form>`
     : `<div class="card"><h3>Dados do paciente</h3><div class="campos">${campo('WhatsApp', p.fone?fmtFone(p.fone):'')}${campo('Nascimento', p.nasc?fmtD(p.nasc)+' ('+idade(p.nasc)+')':'')}${campo('CPF', p.cpf)}${campo('Endereço', p.endereco)}</div>
@@ -1228,6 +1237,7 @@ document.addEventListener('change', e => {
   if(e.target.id==='atProc'){ const p = S.procs.find(x=>x.nome===e.target.value); if(p) document.getElementById('atValor').value = p.valor; calcAt(); }
   if(['atForma','atParc'].includes(e.target.id)) calcAt();
   // Ao mudar o início, o término anda junto e mantém a duração (começa com 1 hora)
+  if(['npCpf','pdCpf'].includes(e.target.id)) e.target.value = fmtCpf(e.target.value);
   if(e.target.id==='agHora'){ const f = document.getElementById('agFim'), dur = Math.max(hMin(f.value) - hMin(e.target.dataset.old||e.target.value), 15);
     f.value = minH(hMin(e.target.value) + dur); e.target.dataset.old = e.target.value; }
   if(e.target.id==='agPac'){ const p = pacientes().find(x=>x.nome.toLowerCase()===e.target.value.trim().toLowerCase()); const f = document.getElementById('agFone'); if(p && p.fone && !f.value) f.value = p.fone; }
@@ -1250,9 +1260,13 @@ document.addEventListener('submit', e => {
     return;
   }
   if(document.activeElement && document.activeElement.blur) document.activeElement.blur();
-  if(id==='fPac'){ const pid = garantirPac($('npNome'), $('npFone').replace(/\D/g,'')); const p = S.pac.find(x=>x.id===pid); if(p && $('npNasc') && !p.nasc) put('pacientes', {...p, nasc:$('npNasc')}); toast('Ficha pronta'); return abrirFicha(pid); }
+  if(id==='fPac'){ const cpf = fmtCpf($('npCpf')), endereco = $('npEnd').trim();
+    const pid = garantirPac($('npNome'), $('npFone').replace(/\D/g,''), {nasc:$('npNasc'), cpf, endereco}); const p = S.pac.find(x=>x.id===pid);
+    // Ficha que já existia: completa só o que estava em branco
+    if(p){ const novo = {...p, nasc:p.nasc||$('npNasc'), cpf:p.cpf||cpf, endereco:p.endereco||endereco}; if(novo.nasc!==p.nasc || novo.cpf!==p.cpf || novo.endereco!==p.endereco) put('pacientes', novo); }
+    toast('Ficha pronta'); return abrirFicha(pid); }
   if(id==='fDados'){ const p = S.pac.find(x=>x.id===pacSel); if(!p) return;
-    put('pacientes', {...p, nome:$('pdNome').trim()||p.nome, fone:$('pdFone').replace(/\D/g,''), nasc:$('pdNasc'), cpf:$('pdCpf').trim(), endereco:$('pdEnd').trim()}); pacEdit = null; render(); return toast('Dados salvos'); }
+    put('pacientes', {...p, nome:maiusc($('pdNome'))||p.nome, fone:$('pdFone').replace(/\D/g,''), nasc:$('pdNasc'), cpf:fmtCpf($('pdCpf')), endereco:$('pdEnd').trim()}); pacEdit = null; render(); return toast('Dados salvos'); }
   if(id==='fAnam'){ const p = S.pac.find(x=>x.id===pacSel); if(!p) return; const g = $('anGest');
     put('pacientes', {...p, anamnese:{alergias:$('anAlerg').trim(), medicamentos:$('anMed').trim(), doencas:$('anDoen').trim(), gestante: g==='sim'?true:g==='nao'?false:null, obs:$('anObs').trim()}}); pacEdit = null; render(); return toast('Anamnese salva'); }
   if(id==='fPlano'){ const p = S.pac.find(x=>x.id===pacSel); if(!p) return;
@@ -1264,13 +1278,13 @@ document.addEventListener('submit', e => {
     if(hMin(fim) <= hMin(hora)) return toast('O horário de término precisa ser depois do início');
     const ch = choques(data, prof, hora, fim);
     if(agModo==='compromisso') put('agenda', {id:nid, tipo:'compromisso', paciente:$('agTit').trim(), data, hora, fim, prof, obs:$('agObs').trim(), proc:'', fone:'', status:'pendente'});
-    else { put('agenda', {id:nid,pacienteId:garantirPac($('agPac'), $('agFone').replace(/\D/g,'')),data,hora,fim,paciente:$('agPac').trim(),fone:$('agFone').replace(/\D/g,''),prof,proc:$('agProc'),status:'pendente'}); ultimoAg = nid; }
+    else { put('agenda', {id:nid,pacienteId:garantirPac($('agPac'), $('agFone').replace(/\D/g,'')),data,hora,fim,paciente:maiusc($('agPac')),fone:$('agFone').replace(/\D/g,''),prof,proc:$('agProc'),status:'pendente'}); ultimoAg = nid; }
     agDay = data; render(); window.scrollTo({top:0});
     toast((agModo==='compromisso'?'Compromisso salvo':'Agendamento salvo') + (ch.length ? ` · Atenção: bate com ${ch.map(o=>o.paciente+' ('+o.hora+(o.fim?'–'+o.fim:'')+')').join(', ')}` : '')); }
   if(id==='fAt'){ const f=$('atForma'), p=f==='Crédito parcelado'?+$('atParc'):1;
     const conhecido = pacientes().find(x=>normN(x.nome)===normN($('atPac'))), pid = garantirPac($('atPac'), conhecido ? conhecido.fone : '');
-    put('atendimentos', {id:novoId(),pacienteId:pid,data:$('atData'),paciente:$('atPac').trim(),prof:$('atProf'),tipo:$('atTipo'),proc:$('atProc'),valor:parseFloat($('atValor'))||0,forma:f,parc:p,taxa:taxaDe(f,p)});
-    if($('atDentes').trim() || $('atObs').trim()) put('evolucoes', {id:novoId(),pacienteId:pid,paciente:$('atPac').trim(),data:$('atData'),prof:$('atProf'),dentes:$('atDentes').trim(),proc:$('atProc'),obs:$('atObs').trim()});
+    put('atendimentos', {id:novoId(),pacienteId:pid,data:$('atData'),paciente:maiusc($('atPac')),prof:$('atProf'),tipo:$('atTipo'),proc:$('atProc'),valor:parseFloat($('atValor'))||0,forma:f,parc:p,taxa:taxaDe(f,p)});
+    if($('atDentes').trim() || $('atObs').trim()) put('evolucoes', {id:novoId(),pacienteId:pid,paciente:maiusc($('atPac')),data:$('atData'),prof:$('atProf'),dentes:$('atDentes').trim(),proc:$('atProc'),obs:$('atObs').trim()});
     render(); toast('Atendimento salvo e lançado no caixa'); }
   if(id==='fDesp'){ const mensal = document.getElementById('dpMensal').checked, pago = $('dpSit')==='pago', data = $('dpData'), pacNome = $('dpPac').trim();
     const pac = pacNome ? S.pac.find(x=>normN(x.nome)===normN(pacNome)) : null;

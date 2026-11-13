@@ -92,6 +92,9 @@ td.r,th.r{text-align:right}
 .slot:last-child{border-bottom:0}
 @media (max-width:560px){.slot{grid-template-columns:52px minmax(0,1fr)}.slot .act{grid-column:1/-1;justify-content:flex-start}}
 .slot .h{font-weight:700;font-variant-numeric:tabular-nums}
+.slot .h small{display:block;font-weight:400;color:var(--muted);font-size:.8rem;white-space:nowrap}
+.slot.comp{border-left:3px solid var(--gold);padding-left:10px}
+.chip.c-comp{background:color-mix(in srgb, var(--gold) 18%, transparent);color:var(--ink)}
 .slot .who{min-width:0}
 .slot .who b{display:block}
 .slot .who small{color:var(--muted)}
@@ -265,7 +268,7 @@ let db;
 try { db = initializeFirestore(fb, {localCache: persistentLocalCache({tabManager: persistentMultipleTabManager()})}); }
 catch(e){ db = initializeFirestore(fb, {}); }
 
-const VERSAO = '11/11/2026 · 13'; // aumentar a cada envio ao GitHub, para conferir se o celular pegou a atualização
+const VERSAO = '13/11/2026 · 14'; // aumentar a cada envio ao GitHub, para conferir se o celular pegou a atualização
 const FORMAS = ['Pix','Dinheiro','Débito','Crédito à vista','Crédito parcelado'];
 const TABS = [['inicio','Início'],['dash','Dashboard'],['agenda','Agenda'],['pacientes','Pacientes'],['confirm','Confirmações'],['aniver','Aniversários'],['atend','Atendimentos'],['caixa','Fluxo de caixa'],['despesas','Despesas'],['contas','Contas a pagar'],['impostos','Impostos'],['estoque','Estoque'],['rel','Relatórios'],['config','Configurações']];
 const brl = v => (v||0).toLocaleString('pt-BR',{style:'currency',currency:'BRL'});
@@ -302,7 +305,7 @@ const num = v => +v || 0;
 const dataOk = s => /^\d{4}-\d{2}-\d{2}$/.test(s||'');
 const STATUS = {pendente:['Não enviado','c-neu'],enviado:['Aguardando resposta','c-warn'],confirmado:['Confirmado','c-ok'],remarcar:['Pediu remarcar','c-bad']};
 const NORM = {
-  agenda: a => dataOk(a.data) && a.paciente ? {...a, hora:a.hora||'', fone:a.fone||'', proc:a.proc||'', prof:a.prof||'p1', status:STATUS[a.status]?a.status:'pendente'} : null,
+  agenda: a => dataOk(a.data) && a.paciente ? {...a, hora:a.hora||'', fim:a.fim||'', fone:a.fone||'', proc:a.proc||'', prof:a.prof||'p1', status:STATUS[a.status]?a.status:'pendente'} : null,
   atendimentos: a => dataOk(a.data) && a.paciente ? {...a, valor:num(a.valor), taxa:num(a.taxa), parc:+a.parc||1, forma:a.forma||'Pix', prof:a.prof||'p1', proc:a.proc||'Atendimento'} : null,
   despesas: d => dataOk(d.data) && d.desc ? {...d, valor:num(d.valor), tipo:d.tipo==='Variável'?'Variável':'Fixa'} : null,
   estoque: i => i.nome ? {...i, qtd:num(i.qtd), min:num(i.min), custo:num(i.custo), val:i.val||'', un:i.un||'unidade', cat:i.cat||'Outros'} : null,
@@ -350,9 +353,19 @@ const mesNome = () => new Date(TODAY+'T12:00').toLocaleDateString('pt-BR',{month
 const MEIO_DIA = '12:00';
 const ehTarde = a => (a.hora||'') >= MEIO_DIA;
 const porHora = (a,b) => (a.hora||'').localeCompare(b.hora||'');
+// Compromisso pessoal na agenda (consulta do bebê, exame de vista…): não tem paciente, não vai para confirmações nem fichas.
+const ehComp = a => a.tipo==='compromisso';
+const agPac = () => S.agenda.filter(a=>!ehComp(a));
+// Horário com início e fim ("09:30" e embaixo "até 10:30"); registros antigos só têm o início.
+const horaHtml = a => `${a.hora}${a.fim?`<small>até ${a.fim}</small>`:''}`;
+const hMin = h => { const [x,y] = String(h||'0:0').split(':'); return (+x||0)*60 + (+y||0); };
+const minH = m => { m = Math.max(0, Math.min(m, 23*60+59)); return String(Math.floor(m/60)).padStart(2,'0')+':'+String(m%60).padStart(2,'0'); };
+// Outros horários do mesmo dia e da mesma pessoa que se cruzam com [ini, fim)
+const choques = (data, prof, ini, fim, semId) => S.agenda.filter(o=>o.id!==semId && o.data===data && o.prof===prof && o.hora).filter(o=>{
+  const a = hMin(o.hora), b = o.fim ? hMin(o.fim) : a+1; return a < hMin(fim) && b > hMin(ini); });
 const gruposConfirmar = () => ({
-  tardeHoje: S.agenda.filter(a=>a.data===TODAY && ehTarde(a)).sort(porHora),
-  manhaAmanha: S.agenda.filter(a=>a.data===addDays(TODAY,1) && !ehTarde(a)).sort(porHora)
+  tardeHoje: agPac().filter(a=>a.data===TODAY && ehTarde(a)).sort(porHora),
+  manhaAmanha: agPac().filter(a=>a.data===addDays(TODAY,1) && !ehTarde(a)).sort(porHora)
 });
 const pendAmanha = () => { const g = gruposConfirmar(); return [...g.tardeHoje, ...g.manhaAmanha].filter(a=>['pendente','enviado'].includes(stAg(a))).length; };
 const estBaixo = i => i.qtd <= i.min;
@@ -361,7 +374,7 @@ const estAlert = () => S.estoque.filter(i=>estBaixo(i)||estVence(i)).length;
 // Todos os pacientes conhecidos: as fichas primeiro (nome e WhatsApp da ficha valem mais), depois quem só aparece na agenda ou nos atendimentos.
 const pacientes = () => {
   const m = new Map();
-  [...S.atend, ...S.agenda].sort((a,b)=>a.data.localeCompare(b.data)).forEach(x=>{ const n = (x.paciente||'').trim(), k = normN(n); if(n) m.set(k, {nome:n, fone:x.fone || (m.get(k)||{}).fone || ''}); });
+  [...S.atend, ...agPac()].sort((a,b)=>a.data.localeCompare(b.data)).forEach(x=>{ const n = (x.paciente||'').trim(), k = normN(n); if(n) m.set(k, {nome:n, fone:x.fone || (m.get(k)||{}).fone || ''}); });
   S.pac.forEach(p=>{ const k = normN(p.nome); m.set(k, {nome:p.nome, fone:p.fone || (m.get(k)||{}).fone || ''}); });
   return [...m.values()].sort((a,b)=>a.nome.localeCompare(b.nome,'pt-BR'));
 };
@@ -399,7 +412,9 @@ V.inicio = () => {
     <div class="kpi main"><span>Saldo do mês</span><b>${brl(r.saldo)}</b></div>
   </div>
   <div class="grid g2">
-    <div class="card"><h3>Agenda de hoje · ${hoje.length} ${hoje.length===1?'paciente':'pacientes'}</h3>${hoje.length?hoje.map(a=>`<div class="slot"><span class="h">${a.hora}</span><div class="who"><b>${esc(a.paciente)}</b><small>${esc(a.proc)} · ${esc(profCurto(a.prof))}</small></div><div class="act">${viaClaude(a)}${chip(stAg(a))}</div></div>`).join(''):'<p class="empty">Nenhum paciente hoje.</p>'}</div>
+    <div class="card"><h3>Agenda de hoje · ${hoje.filter(a=>!ehComp(a)).length} ${hoje.filter(a=>!ehComp(a)).length===1?'paciente':'pacientes'}${hoje.some(ehComp)?` · ${hoje.filter(ehComp).length} ${hoje.filter(ehComp).length===1?'compromisso':'compromissos'}`:''}</h3>${hoje.length?hoje.map(a=>ehComp(a)
+      ? `<div class="slot comp"><span class="h">${horaHtml(a)}</span><div class="who"><b>${esc(a.paciente)}</b><small>${esc(profCurto(a.prof))}${a.obs?' · '+esc(a.obs):''}</small></div><div class="act"><span class="chip c-comp">compromisso</span></div></div>`
+      : `<div class="slot"><span class="h">${horaHtml(a)}</span><div class="who"><b>${esc(a.paciente)}</b><small>${esc(a.proc)} · ${esc(profCurto(a.prof))}</small></div><div class="act">${viaClaude(a)}${chip(stAg(a))}</div></div>`).join(''):'<p class="empty">Nada marcado para hoje.</p>'}</div>
     <div class="card"><h3>Faturamento por profissional</h3>${bars(porProf)}
       <div class="mt" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap"><span class="chip c-warn">${pendAmanha()} ${pendAmanha()===1?'confirmação pendente':'confirmações pendentes'}</span><button class="btn sm ghost" data-go="confirm">Abrir confirmações</button></div>
       ${aniverHoje().length?`<div class="mt" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap"><span class="chip c-neu">🎂 ${aniverHoje().length} ${aniverHoje().length>1?'aniversariantes':'aniversariante'} hoje</span><button class="btn sm ghost" data-go="aniver">Ver aniversários</button></div>`:''}
@@ -460,8 +475,11 @@ V.dash = () => {
   </div>`;
 };
 
+let agModo = 'paciente'; // formulário da Agenda: 'paciente' ou 'compromisso'
+const linhaComp = a => `<div class="slot slot-ag comp"><span class="h">${horaHtml(a)}</span><div class="who"><b>${esc(a.paciente)}</b><small>Compromisso · ${esc(profCurto(a.prof))}${a.obs?' · '+esc(a.obs):''}</small></div><div class="act">${viaClaude(a)}<span class="chip c-comp">compromisso</span><button class="btn sm danger" data-del="agenda:${a.id}">Excluir</button></div></div>`;
 V.agenda = () => {
   const lista = S.agenda.filter(a=>a.data===agDay).sort((a,b)=>a.hora.localeCompare(b.hora));
+  const comp = agModo==='compromisso';
   const opt = (arr,sel) => arr.map(o=>`<option value="${esc(o[0])}" ${o[0]===sel?'selected':''}>${esc(o[1])}</option>`).join('');
   const novo = ultimoAg && S.agenda.find(x=>x.id===ultimoAg);
   const aviso = novo ? `<div class="card aviso-ag" style="margin-bottom:16px"><b>✓ Agendado: ${esc(novo.paciente)}</b>, ${diaSem(novo.data)}, ${fmtD(novo.data)} às ${novo.hora}.
@@ -472,15 +490,20 @@ V.agenda = () => {
     <div class="card">
       <div class="daynav"><button class="btn sm ghost" data-day="-1" aria-label="Dia anterior">‹</button><b>${diaSem(agDay)}, ${fmtD(agDay)}${agDay===TODAY?' · hoje':''}</b><button class="btn sm ghost" data-day="1" aria-label="Próximo dia">›</button></div>
       ${agDay!==TODAY?'<button class="btn sm ghost" data-hoje="1" style="margin-bottom:8px">Voltar para hoje</button>':''}
-      ${lista.length?lista.map(a=>`<div class="slot slot-ag"><span class="h">${a.hora}</span><div class="who"><b>${esc(a.paciente)}</b><small>${esc(a.proc)} · ${esc(profCurto(a.prof))}${a.fone?' · '+esc(a.fone):''}</small></div><div class="act">${viaClaude(a)}${chip(stAg(a))}${a.avisoMarcacao?'<span class="chip c-ok" title="Mensagem de agendamento enviada">avisado</span>':a.fone && a.data>=TODAY?`<button class="btn sm wa" data-avisar="${a.id}" title="Enviar mensagem de agendamento">Avisar</button>`:''}<button class="btn sm ghost" data-ficha="${esc(a.paciente)}" data-fone="${esc(a.fone)}">Ficha</button><button class="btn sm ghost" data-atender="${a.id}">Registrar atendimento</button><button class="btn sm danger" data-del="agenda:${a.id}">Excluir</button></div></div>`).join(''):'<p class="empty">Nenhum horário marcado neste dia. Use o formulário ao lado para agendar.</p>'}
+      ${lista.length?lista.map(a=>ehComp(a) ? linhaComp(a) : `<div class="slot slot-ag"><span class="h">${horaHtml(a)}</span><div class="who"><b>${esc(a.paciente)}</b><small>${esc(a.proc)} · ${esc(profCurto(a.prof))}${a.fone?' · '+esc(a.fone):''}</small></div><div class="act">${viaClaude(a)}${chip(stAg(a))}${a.avisoMarcacao?'<span class="chip c-ok" title="Mensagem de agendamento enviada">avisado</span>':a.fone && a.data>=TODAY?`<button class="btn sm wa" data-avisar="${a.id}" title="Enviar mensagem de agendamento">Avisar</button>`:''}<button class="btn sm ghost" data-ficha="${esc(a.paciente)}" data-fone="${esc(a.fone)}">Ficha</button><button class="btn sm ghost" data-atender="${a.id}">Registrar atendimento</button><button class="btn sm danger" data-del="agenda:${a.id}">Excluir</button></div></div>`).join(''):'<p class="empty">Nenhum horário marcado neste dia. Use o formulário ao lado para agendar.</p>'}
     </div>
     <form class="card" id="fAg" style="align-self:start"><h3>Novo agendamento</h3>
+      <div class="seg" role="group" aria-label="Tipo de agendamento" style="margin-bottom:12px"><button type="button" data-agmodo="paciente" aria-pressed="${!comp}">Paciente</button><button type="button" data-agmodo="compromisso" aria-pressed="${comp}">Compromisso</button></div>
+      ${comp ? `<p class="note" style="margin:0 0 10px">Para a sua agenda pessoal: consulta, exame, reunião… Não envia mensagem e não entra nas confirmações.</p>
+      <div class="row"><label>O que é<input id="agTit" required autocomplete="off" placeholder="Ex.: Pediatra do bebê, exame de vista"></label></div>` : `
       <div class="row"><label class="sug">Paciente<input id="agPac" required autocomplete="off" placeholder="Digite o nome" data-sug="agFone"><div class="sug-lista" id="sug-agPac" hidden></div></label></div>
-      <div class="row"><label>WhatsApp do paciente<input id="agFone" inputmode="tel" placeholder="(88) 99999-0000"></label></div>
-      <div class="row"><label>Data<input id="agData" type="date" required value="${agDay}"></label><label>Horário<input id="agHora" type="time" required value="08:00"></label></div>
-      <div class="row"><label>Profissional<select id="agProf">${opt(S.profs.map(p=>[p.id,p.nome]))}</select></label></div>
-      <div class="row"><label>Procedimento<select id="agProc">${opt(S.procs.map(p=>[p.nome,p.nome]))}</select></label></div>
-      <button class="btn" type="submit">Agendar</button>
+      <div class="row"><label>WhatsApp do paciente<input id="agFone" inputmode="tel" placeholder="(88) 99999-0000"></label></div>`}
+      <div class="row"><label>Data<input id="agData" type="date" required value="${agDay}"></label></div>
+      <div class="row"><label>Das<input id="agHora" type="time" required value="08:00" data-old="08:00"></label><label>Até<input id="agFim" type="time" required value="09:00"></label></div>
+      <div class="row"><label>${comp?'De quem':'Profissional'}<select id="agProf">${opt(S.profs.map(p=>[p.id,p.nome]))}</select></label></div>
+      ${comp ? `<div class="row"><label>Observação (opcional)<input id="agObs" autocomplete="off" placeholder="Ex.: Clínica X, levar exames"></label></div>`
+             : `<div class="row"><label>Procedimento<select id="agProc">${opt(S.procs.map(p=>[p.nome,p.nome]))}</select></label></div>`}
+      <button class="btn" type="submit">${comp?'Salvar compromisso':'Agendar'}</button>
     </form>
   </div>`;
 };
@@ -496,7 +519,7 @@ function msgConf(a){
   const quando = a.data===TODAY ? `hoje (${diaSem(a.data)}, ${fmtD(a.data)})` : a.data===addDays(TODAY,1) ? `amanhã (${diaSem(a.data)}, ${fmtD(a.data)})` : `${diaSem(a.data)}, ${fmtD(a.data)}`;
   return `Olá, ${primeiroNome(a.paciente)}! Aqui é do consultório Dra. Iolanda Alves Odontologia.\n\nSua consulta está marcada para ${quando}, às ${a.hora}, com ${profCurto(a.prof)} (${a.proc}).\n\nToque no link para confirmar ou pedir remarcação:\n${link}`;
 }
-const linhaConf = x => `<div class="slot slot-ag" style="${x.id===selConf?'background:var(--plum-soft);margin-inline:-10px;padding-inline:10px;border-radius:8px':''}"><span class="h">${x.hora}</span><div class="who"><b>${esc(x.paciente)}</b><small>${esc(x.proc)} · ${esc(profCurto(x.prof))}${x.fone?'':' · <span class="neg">sem WhatsApp</span>'}</small><div style="margin-top:4px">${viaClaude(x)}${chip(stAg(x))}</div></div>
+const linhaConf = x => `<div class="slot slot-ag" style="${x.id===selConf?'background:var(--plum-soft);margin-inline:-10px;padding-inline:10px;border-radius:8px':''}"><span class="h">${horaHtml(x)}</span><div class="who"><b>${esc(x.paciente)}</b><small>${esc(x.proc)} · ${esc(profCurto(x.prof))}${x.fone?'':' · <span class="neg">sem WhatsApp</span>'}</small><div style="margin-top:4px">${viaClaude(x)}${chip(stAg(x))}</div></div>
         <div class="act"><button class="btn sm ghost" data-sel="${x.id}">Ver mensagem</button><button class="btn sm wa" data-sent="${x.id}" ${x.fone?'':'disabled'}>Enviar</button><button class="btn sm ghost" data-st="${x.id}:confirmado" title="Marcar como confirmado">Confirmou</button><button class="btn sm ghost" data-st="${x.id}:remarcar" title="Marcar que pediu para remarcar">Remarcar</button></div></div>`;
 V.confirm = () => {
   const g = gruposConfirmar(), manhaAgora = new Date().getHours() < 12;
@@ -952,7 +975,7 @@ function ficha(p){
   const a = p.anamnese || {}, f = dePac(p), ed = pacEdit;
   const evos = S.evo.filter(f).sort((x,y)=>(y.data+(y.hora||'')).localeCompare(x.data+(x.hora||'')));
   const ats = S.atend.filter(f).sort((x,y)=>y.data.localeCompare(x.data));
-  const prox = S.agenda.filter(f).filter(x=>x.data>=TODAY).sort((x,y)=>(x.data+x.hora).localeCompare(y.data+y.hora));
+  const prox = agPac().filter(f).filter(x=>x.data>=TODAY).sort((x,y)=>(x.data+x.hora).localeCompare(y.data+y.hora));
   const plano = p.plano || [];
   const campo = (rot, v) => `<div><span class="rot">${rot}</span><span class="val">${String(v||'').trim()?esc(v):'<span class="muted">—</span>'}</span></div>`;
   const gest = a.gestante===true ? 'Sim' : a.gestante===false ? 'Não' : '';
@@ -992,7 +1015,7 @@ function ficha(p){
       ${evos.length ? evos.map(e=>`<div class="evo"><div class="evo-h">${viaClaude(e)}<b>${fmtD(e.data)}</b> · ${esc(profCurto(e.prof))}${e.dentes?' · dentes '+esc(e.dentes):''}</div>${e.proc?`<b>${esc(e.proc)}</b>`:''}${e.obs?`<p>${esc(e.obs)}</p>`:''}<button class="x noprint" type="button" data-del="evolucoes:${e.id}" aria-label="Excluir evolução" title="Excluir">✕</button></div>`).join('') : '<p class="muted" style="margin:0">Nenhuma evolução registrada ainda.</p>'}
     </div>
     <div class="card"><h3>Atendimentos e pagamentos</h3>${ats.length ? `<div class="tbl-wrap"><table class="resp"><thead><tr><th>Data</th><th>Procedimento</th><th class="r">Valor</th></tr></thead><tbody>${ats.map(x=>`<tr><td class="num" data-label="Data">${fmtD(x.data)}</td><td class="full">${esc(x.proc)}<br><small class="muted">${esc(profCurto(x.prof))} · ${esc(x.forma)}${x.parc>1?' '+x.parc+'x':''}</small></td><td class="r num" data-label="Valor">${brl(x.valor)}</td></tr>`).join('')}</tbody></table></div><p class="note">Total: <b>${brl(ats.reduce((s,x)=>s+x.valor,0))}</b></p>` : '<p class="muted" style="margin:0">Nenhum atendimento lançado.</p>'}</div>
-    <div class="card"><h3>Próximos agendamentos</h3>${prox.length ? prox.map(x=>`<div class="slot"><span class="h">${x.hora}</span><div class="who"><b>${diaSem(x.data)}, ${fmtD(x.data)}</b><small>${esc(x.proc)} · ${esc(profCurto(x.prof))}</small></div><div class="act">${chip(stAg(x))}</div></div>`).join('') : '<p class="muted" style="margin:0">Nenhum agendamento futuro.</p>'}</div>
+    <div class="card"><h3>Próximos agendamentos</h3>${prox.length ? prox.map(x=>`<div class="slot"><span class="h">${horaHtml(x)}</span><div class="who"><b>${diaSem(x.data)}, ${fmtD(x.data)}</b><small>${esc(x.proc)} · ${esc(profCurto(x.prof))}</small></div><div class="act">${chip(stAg(x))}</div></div>`).join('') : '<p class="muted" style="margin:0">Nenhum agendamento futuro.</p>'}</div>
   </div>`;
 }
 V.pacientes = () => { const p = pacSel && S.pac.find(x=>x.id===pacSel); if(!p) pacSel = null; return p ? ficha(p) : listaPac(); };
@@ -1096,7 +1119,7 @@ document.addEventListener('click', e => {
   if(esc_){ const campo = document.getElementById(esc_.dataset.campo); campo.value = esc_.dataset.escolher; esc_.parentElement.hidden = true;
     const alvo = campo.dataset.sug && document.getElementById(campo.dataset.sug); if(alvo && esc_.dataset.fone) alvo.value = esc_.dataset.fone; return; }
   if(!e.target.closest('.sug')) document.querySelectorAll('.sug-lista').forEach(l=>l.hidden = true);
-  const t = e.target.closest('[data-tab],[data-go],[data-day],[data-hoje],[data-atender],[data-sel],[data-sent],[data-st],[data-del],[data-delproc],[data-usar],[data-comprar],[data-abrirpac],[data-ficha],[data-voltarpac],[data-imprimir],[data-editpac],[data-plano],[data-delplano],[data-dmes],[data-dfiltro],[data-pagar],[data-delcolab],[data-cxvis],[data-cxdia],[data-cxnav],[data-cxhoje],[data-avisar],[data-fecharaviso],[data-parabens],[data-cmes],[data-imes],[data-clocal],[data-pagarconta],[data-cancelpag],[data-editconta],[data-cancelconta],[data-desativar],#addProc,#backup,#sair,#sair2,#sair3,#esqueci,#trocarSenha');
+  const t = e.target.closest('[data-tab],[data-go],[data-day],[data-hoje],[data-atender],[data-sel],[data-sent],[data-st],[data-del],[data-delproc],[data-usar],[data-comprar],[data-abrirpac],[data-ficha],[data-voltarpac],[data-imprimir],[data-editpac],[data-plano],[data-delplano],[data-dmes],[data-dfiltro],[data-pagar],[data-delcolab],[data-cxvis],[data-agmodo],[data-cxdia],[data-cxnav],[data-cxhoje],[data-avisar],[data-fecharaviso],[data-parabens],[data-cmes],[data-imes],[data-clocal],[data-pagarconta],[data-cancelpag],[data-editconta],[data-cancelconta],[data-desativar],#addProc,#backup,#sair,#sair2,#sair3,#esqueci,#trocarSenha');
   if(!t) return;
   if(['sair','sair2','sair3'].includes(t.id)) return signOut(auth);
   if(t.id==='esqueci'){
@@ -1125,6 +1148,7 @@ document.addEventListener('click', e => {
   if(t.dataset.desativar){ const c = S.contas.find(x=>x.id===t.dataset.desativar); if(!c) return;
     if(!t.classList.contains('armed')){ t.classList.add('armed'); t.textContent='Remover?'; return; }
     put('contas', {...c, ativa:false, ate:contasMes||MES}); if(contaEdit===c.id) contaEdit = null; render(); return toast('Conta removida dos próximos meses'); }
+  if(t.dataset.agmodo){ agModo = t.dataset.agmodo; return render(); }
   if(t.dataset.cxvis){ caixaVis = t.dataset.cxvis; if(caixaVis==='dia' && !caixaDia) caixaDia = TODAY; return render(); }
   if(t.dataset.cxdia){ caixaVis = 'dia'; caixaDia = t.dataset.cxdia; render(); return window.scrollTo({top:0}); }
   if(t.dataset.cxnav){ caixaDia = addDays(caixaDia || TODAY, +t.dataset.cxnav); return render(); }
@@ -1203,6 +1227,9 @@ document.addEventListener('input', e => {
 document.addEventListener('change', e => {
   if(e.target.id==='atProc'){ const p = S.procs.find(x=>x.nome===e.target.value); if(p) document.getElementById('atValor').value = p.valor; calcAt(); }
   if(['atForma','atParc'].includes(e.target.id)) calcAt();
+  // Ao mudar o início, o término anda junto e mantém a duração (começa com 1 hora)
+  if(e.target.id==='agHora'){ const f = document.getElementById('agFim'), dur = Math.max(hMin(f.value) - hMin(e.target.dataset.old||e.target.value), 15);
+    f.value = minH(hMin(e.target.value) + dur); e.target.dataset.old = e.target.value; }
   if(e.target.id==='agPac'){ const p = pacientes().find(x=>x.nome.toLowerCase()===e.target.value.trim().toLowerCase()); const f = document.getElementById('agFone'); if(p && p.fone && !f.value) f.value = p.fone; }
   if(e.target.id==='ctLocal' && e.target.value==='Casa') document.getElementById('ctCat').value = 'Casa';
   if(e.target.id==='dpFiltro'){ despFiltro = e.target.value; return render(); }
@@ -1233,8 +1260,13 @@ document.addEventListener('submit', e => {
   if(id==='fEvo'){ const p = S.pac.find(x=>x.id===pacSel); if(!p) return;
     if(!$('evProc').trim() && !$('evObs').trim()) return toast('Escreva o procedimento ou o que foi feito');
     put('evolucoes', {id:novoId(), pacienteId:p.id, paciente:p.nome, data:$('evData'), prof:$('evProf'), dentes:$('evDentes').trim(), proc:$('evProc').trim(), obs:$('evObs').trim()}); render(); return toast('Evolução salva'); }
-  if(id==='fAg'){ const nid = novoId(); put('agenda', {id:nid,pacienteId:garantirPac($('agPac'), $('agFone').replace(/\D/g,'')),data:$('agData'),hora:$('agHora'),paciente:$('agPac').trim(),fone:$('agFone').replace(/\D/g,''),prof:$('agProf'),proc:$('agProc'),status:'pendente'});
-    agDay = $('agData'); ultimoAg = nid; render(); window.scrollTo({top:0}); toast('Agendamento salvo'); }
+  if(id==='fAg'){ const nid = novoId(), data = $('agData'), hora = $('agHora'), fim = $('agFim'), prof = $('agProf');
+    if(hMin(fim) <= hMin(hora)) return toast('O horário de término precisa ser depois do início');
+    const ch = choques(data, prof, hora, fim);
+    if(agModo==='compromisso') put('agenda', {id:nid, tipo:'compromisso', paciente:$('agTit').trim(), data, hora, fim, prof, obs:$('agObs').trim(), proc:'', fone:'', status:'pendente'});
+    else { put('agenda', {id:nid,pacienteId:garantirPac($('agPac'), $('agFone').replace(/\D/g,'')),data,hora,fim,paciente:$('agPac').trim(),fone:$('agFone').replace(/\D/g,''),prof,proc:$('agProc'),status:'pendente'}); ultimoAg = nid; }
+    agDay = data; render(); window.scrollTo({top:0});
+    toast((agModo==='compromisso'?'Compromisso salvo':'Agendamento salvo') + (ch.length ? ` · Atenção: bate com ${ch.map(o=>o.paciente+' ('+o.hora+(o.fim?'–'+o.fim:'')+')').join(', ')}` : '')); }
   if(id==='fAt'){ const f=$('atForma'), p=f==='Crédito parcelado'?+$('atParc'):1;
     const conhecido = pacientes().find(x=>normN(x.nome)===normN($('atPac'))), pid = garantirPac($('atPac'), conhecido ? conhecido.fone : '');
     put('atendimentos', {id:novoId(),pacienteId:pid,data:$('atData'),paciente:$('atPac').trim(),prof:$('atProf'),tipo:$('atTipo'),proc:$('atProc'),valor:parseFloat($('atValor'))||0,forma:f,parc:p,taxa:taxaDe(f,p)});
